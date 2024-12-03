@@ -300,15 +300,16 @@ class Nuitkalicious:
         if self.jobs_var.get():
             cmd.append(f'--jobs={self.jobs_var.get()}')
             
-        # Add icon if selected
+        # Add icon both as Windows icon and as a data file
         if self.icon_path:
+            icon_basename = os.path.basename(self.icon_path)
             cmd.append(f'--windows-icon-from-ico="{self.icon_path}"')
+            cmd.append(f'--include-data-files="{self.icon_path}"="{icon_basename}"')
             
         # Add resource files to command with proper quoting
         for res_file in self.resource_files:
-            # Use basename of the file as the target path
             target_path = os.path.basename(res_file)
-            if not res_file.lower().endswith('.ico'):  # Skip .ico files from general resources
+            if not res_file.lower().endswith('.ico'):  # Skip .ico files as they're handled above
                 cmd.append(f'--include-data-file="{res_file}"="{target_path}"')
             
         # Add the script path as the last argument with proper quoting
