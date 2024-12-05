@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, scrolledtext
+from tkinter import ttk, filedialog, scrolledtext, messagebox
 import subprocess
 import threading
 import os
@@ -153,6 +153,45 @@ class Nuitkalicious:
                                         command=self.open_exe_folder, state='disabled')
         self.open_exe_button.pack(side='left', padx=5)
         
+        # Add Clear All button
+        ttk.Button(action_frame, text="Clear All", command=self.clear_all).pack(side='left', padx=5)
+        
+    def clear_all(self):
+        """Reset all fields and checkboxes to their default states"""
+        # Clear text fields
+        self.script_path.set("")
+        self.venv_path.set("")
+        self.jobs_var.set("1")
+        self.output_text.delete('1.0', 'end')
+        self.command_preview.delete('1.0', 'end')
+        
+        # Reset checkboxes
+        self.standalone_var.set(False)
+        self.onefile_var.set(False)
+        self.remove_output_var.set(False)
+        self.no_console_var.set(False)
+        self.follow_imports_var.set(False)
+        self.lto_var.set(False)
+        self.tkinter_var.set(False)
+        self.use_venv_var.set(False)
+        
+        # Reset other states
+        self.venv_entry.config(state='disabled')
+        self.venv_browse_button.config(state='disabled')
+        self.activate_venv_button.config(state='disabled')
+        self.open_exe_button.config(state='disabled')
+        
+        # Clear icon
+        self.icon_path = None
+        self.icon_label.config(text="No icon selected")
+        
+        # Clear resource files
+        self.resource_files.clear()
+        self.resource_listbox.delete(0, 'end')
+        
+        # Reset exe folder
+        self.exe_folder = None
+
     def setup_output_panel(self, parent):
         self.output_text = scrolledtext.ScrolledText(parent, height=8)
         self.output_text.pack(expand=True, fill='both', padx=5, pady=5)
@@ -331,23 +370,37 @@ class Nuitkalicious:
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,  # Capture stderr separately
                 universal_newlines=True,
                 shell=shell
             )
             
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    self.output_text.insert('end', output)
+            # Function to read from a pipe and write to output
+            def read_pipe(pipe):
+                for line in iter(pipe.readline, ''):
+                    self.output_text.insert('end', line)
                     self.output_text.see('end')
                     self.root.update_idletasks()
             
+            # Create threads for both stdout and stderr
+            stdout_thread = threading.Thread(target=read_pipe, args=(process.stdout,))
+            stderr_thread = threading.Thread(target=read_pipe, args=(process.stderr,))
+            
+            # Start both threads
+            stdout_thread.start()
+            stderr_thread.start()
+            
+            # Wait for both threads to complete
+            stdout_thread.join()
+            stderr_thread.join()
+            
+            # Wait for process to complete and get return code
+            process.wait()
             success = process.returncode == 0
+            
             if success:
                 self.open_exe_button.config(state='normal')
+            
             return success
             
         except Exception as e:
@@ -388,6 +441,32 @@ class Nuitkalicious:
             self.output_text.insert('end', f"Error installing Nuitka: {str(e)}\n")
             return False
 
+    def check_python_version_compatibility(self):
+        """Check if Python in the venv is properly configured"""
+        if not self.use_venv_var.get():
+            return True  # Skip check if not using venv
+            
+        try:
+            venv_python = self.get_venv_python()
+            if not os.path.exists(venv_python):
+                self.output_text.insert('end', f"Error: Python executable not found in venv: {venv_python}\n")
+                return False
+            
+            # Just verify the venv Python works
+            venv_cmd = f'"{venv_python}" --version'
+            process = subprocess.run(venv_cmd, shell=True, capture_output=True, text=True)
+            
+            if process.returncode == 0:
+                self.output_text.insert('end', f"Using {process.stdout.strip()}\n")
+                return True
+            else:
+                self.output_text.insert('end', f"Error running Python in venv: {process.stderr}\n")
+                return False
+                
+        except Exception as e:
+            self.output_text.insert('end', f"Error checking Python version: {str(e)}\n")
+            return False
+
     def compile(self):
         if not self.script_path.get():
             self.output_text.insert('end', "Error: No script selected\n")
@@ -396,25 +475,46 @@ class Nuitkalicious:
         # Reset button state
         self.open_exe_button.config(state='disabled')
         
+        # Clear output
+        self.output_text.delete('1.0', 'end')
+        
+        # Check Python version compatibility
+        if not self.check_python_version_compatibility():
+            if not messagebox.askyesno("Version Mismatch", 
+                "Python version mismatch detected. This may cause compilation errors.\nDo you want to continue anyway?"):
+                return
+
         # Store the exe folder path
         script_dir = os.path.dirname(self.script_path.get())
         self.exe_folder = script_dir
 
-        self.output_text.delete('1.0', 'end')
-        
-        if not self.check_nuitka_installed():
-            self.output_text.insert('end', "Nuitka is not installed. Installing now...\n")
-            if not self.install_nuitka():
-                self.output_text.insert('end', "Failed to install Nuitka. Aborting compilation.\n")
-                return
-            self.output_text.insert('end', "Nuitka installed successfully.\n")
+        try:
+            if not self.check_nuitka_installed():
+                self.output_text.insert('end', "Nuitka is not installed. Installing now...\n")
+                if not self.install_nuitka():
+                    self.output_text.insert('end', "Failed to install Nuitka. Aborting compilation.\n")
+                    return
+                self.output_text.insert('end', "Nuitka installed successfully.\n")
 
-        cmd = self.build_command()
-        command = ' '.join(cmd)
-        self.command_preview.delete('1.0', 'end')
-        self.command_preview.insert('end', command)
-        self.output_text.insert('end', f"Executing command:\n{command}\n\n")        
-        threading.Thread(target=lambda: self.run_command(command), daemon=True).start()
+            cmd = self.build_command()
+            command = ' '.join(cmd)
+            self.command_preview.delete('1.0', 'end')
+            self.command_preview.insert('end', command)
+            self.output_text.insert('end', f"Executing command:\n{command}\n\n")
+            
+            def compile_thread():
+                success = self.run_command(command)
+                # Show completion message in the main thread
+                self.root.after(0, lambda: messagebox.showinfo("Compilation Complete", 
+                    "Compilation completed successfully!" if success else "Compilation completed with errors!"))
+            
+            threading.Thread(target=compile_thread, daemon=True).start()
+            
+        except Exception as e:
+            error_msg = f"Compilation error: {str(e)}\n"
+            self.output_text.insert('end', error_msg)
+            self.output_text.see('end')
+            messagebox.showerror("Compilation Error", error_msg)
 
     def open_exe_folder(self):
         if self.exe_folder and os.path.exists(self.exe_folder):
