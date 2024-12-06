@@ -3,9 +3,8 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox
 import subprocess
 import threading
 import os
-import sys
 
-# this block ensures that the ICON is displayed on the taskbar in Windows
+# this block (9-14) ensures that the ICON is displayed on the taskbar in Windows
 try:
     from ctypes import windll
     my_appid = 'com.asteng88.nuitkalicious.nuitkalicious.1.0.0'  # arbitrary string
@@ -18,9 +17,9 @@ class Nuitkalicious:
     def __init__(self, root):
         self.root = root
         self.root.title("Nuitkalicious - Nuitka GUI")
-        self.root.geometry("700x820")
+        self.root.geometry("750x820")
         
-        # Icon
+        # Icon for the app - nuitkalicious.ico
         base_path = os.path.dirname(__file__)
         os.chdir(base_path)
         icon_path = os.path.join(base_path, 'nuitkalicious.ico')
@@ -47,6 +46,13 @@ class Nuitkalicious:
         self.exe_folder = None  # Store the exe folder path
         self.icon_path = None  # Store icon path
         
+        # Advanced options tab
+        self.advanced_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.advanced_frame, text='Advanced Options')
+        
+        # Setup advanced options
+        self.setup_advanced_options()
+
     def setup_basic_options(self):
         # File selection
         file_frame = ttk.LabelFrame(self.basic_frame, text="Python File", padding=5)
@@ -79,12 +85,13 @@ class Nuitkalicious:
         self.no_console_var = tk.BooleanVar()
         ttk.Checkbutton(left_column, text="No Console", variable=self.no_console_var).pack(anchor='w')
         
-        # Right column - Advanced options
+        # Right column - Basic options (removed duplicated options)
         self.follow_imports_var = tk.BooleanVar()
         ttk.Checkbutton(right_column, text="Follow Imports", variable=self.follow_imports_var).pack(anchor='w')
         
+        # Add LTO checkbox to basic options
         self.lto_var = tk.BooleanVar()
-        ttk.Checkbutton(right_column, text="Enable LTO", variable=self.lto_var).pack(anchor='w')
+        ttk.Checkbutton(right_column, text="LTO (Link Time Optimization)", variable=self.lto_var).pack(anchor='w')
         
         self.tkinter_var = tk.BooleanVar()
         ttk.Checkbutton(right_column, text="Enable Tkinter Support", variable=self.tkinter_var).pack(anchor='w')
@@ -121,8 +128,8 @@ class Nuitkalicious:
         self.icon_label = ttk.Label(icon_frame, text="No icon selected")
         self.icon_label.pack(side='left', padx=5, fill='x', expand=True)
         
-        ttk.Button(icon_frame, text="Select Icon", command=self.select_icon).pack(side='right')
         ttk.Button(icon_frame, text="Clear", command=self.clear_icon).pack(side='right', padx=5)
+        ttk.Button(icon_frame, text="Select Icon", command=self.select_icon).pack(side='right')
         
         # Add Resource Files section before the compile button
         resource_frame = ttk.LabelFrame(self.basic_frame, text="Resource Files", padding=5)
@@ -157,7 +164,7 @@ class Nuitkalicious:
         ttk.Button(action_frame, text="Clear All", command=self.clear_all).pack(side='left', padx=5)
         
     def clear_all(self):
-        """Reset all fields and checkboxes to their default states"""
+        # Reset all fields and checkboxes to their default states
         # Clear text fields
         self.script_path.set("")
         self.venv_path.set("")
@@ -171,9 +178,9 @@ class Nuitkalicious:
         self.remove_output_var.set(False)
         self.no_console_var.set(False)
         self.follow_imports_var.set(False)
-        self.lto_var.set(False)
         self.tkinter_var.set(False)
         self.use_venv_var.set(False)
+        self.lto_var.set(False)
         
         # Reset other states
         self.venv_entry.config(state='disabled')
@@ -192,11 +199,28 @@ class Nuitkalicious:
         # Reset exe folder
         self.exe_folder = None
 
+        # Reset advanced options
+        if hasattr(self, 'optimization_level'):
+            self.optimization_level.set("2")
+        if hasattr(self, 'debug_var'):
+            self.debug_var.set(False)
+        if hasattr(self, 'unstriped_var'):
+            self.unstriped_var.set(False)
+        if hasattr(self, 'debugger_var'):
+            self.debugger_var.set(False)
+        if hasattr(self, 'doc_var'):
+            self.doc_var.set(False)
+        if hasattr(self, 'follow_stdlib_var'):
+            self.follow_stdlib_var.set(False)
+        if hasattr(self, 'prefer_source_var'):
+            self.prefer_source_var.set(False)
+
     def setup_output_panel(self, parent):
-        self.output_text = scrolledtext.ScrolledText(parent, height=8)
+        self.output_text = scrolledtext.ScrolledText(parent, height=6)
         self.output_text.pack(expand=True, fill='both', padx=5, pady=5)
-        
-        self.command_preview = scrolledtext.ScrolledText(parent, height=5)
+
+        # Command preview pane to cut and paste if the user wants to run the command manually
+        self.command_preview = scrolledtext.ScrolledText(parent, height=6)
         self.command_preview.pack(fill='x', padx=5, pady=5)
         
     def browse_file(self):
@@ -287,13 +311,13 @@ class Nuitkalicious:
             self.resource_listbox.delete(idx)
             
     def get_venv_python(self):
-        """Get the python executable path for the selected venv"""
+        # Get the python executable path for the selected venv
         if self.use_venv_var.get() and self.venv_path.get():
             return os.path.join(self.venv_path.get(), 'Scripts', 'python.exe')
         return 'python'
 
     def run_in_venv(self, command):
-        """Run a command in the context of the selected venv"""
+        # Run a command in the context of the selected venv
         if self.use_venv_var.get() and self.venv_path.get():
             venv_python = self.get_venv_python()
             if not os.path.exists(venv_python):
@@ -316,8 +340,9 @@ class Nuitkalicious:
         cmd.append('--assume-yes-for-downloads')
 
         # Get the directory of the selected Python script
-        if self.script_path.get():
-            script_dir = os.path.dirname(self.script_path.get())
+        script_path = self.script_path.get()
+        if script_path:
+            script_dir = os.path.dirname(script_path)
             # Set output directory and working directory
             cmd.append(f'--output-dir="{script_dir}"')
 
@@ -329,13 +354,14 @@ class Nuitkalicious:
         if self.remove_output_var.get():
             cmd.append('--remove-output')
         if self.no_console_var.get():
-            cmd.append('--windows-disable-console')
+            # Updated console option for newer Nuitka versions
+            cmd.append('--windows-console-mode=disable')
         if self.follow_imports_var.get():
             cmd.append('--follow-imports')
-        if self.lto_var.get():
-            cmd.append('--lto=yes')
         if self.tkinter_var.get():
             cmd.append('--enable-plugin=tk-inter')
+        if self.lto_var.get():  # Updated LTO option to include value
+            cmd.append('--lto=yes')
         if self.jobs_var.get():
             cmd.append(f'--jobs={self.jobs_var.get()}')
             
@@ -350,10 +376,13 @@ class Nuitkalicious:
             target_path = os.path.basename(res_file)
             if not res_file.lower().endswith('.ico'):  # Skip .ico files as they're handled above
                 cmd.append(f'--include-data-file="{res_file}"="{target_path}"')
-            
+
+        # Add advanced options
+        # ...existing code for advanced options...
+
         # Add the script path as the last argument with proper quoting
-        cmd.append(f'"{self.script_path.get()}"')
-        
+        cmd.append(f'"{script_path}"')
+
         return cmd
 
     def check_nuitka_installed(self):
@@ -365,7 +394,7 @@ class Nuitkalicious:
             return False
 
     def run_command(self, cmd, shell=True):
-        """Run a command and capture its output in real-time"""
+        # Run a command and capture its output in real-time
         try:
             process = subprocess.Popen(
                 cmd,
@@ -442,7 +471,7 @@ class Nuitkalicious:
             return False
 
     def check_python_version_compatibility(self):
-        """Check if Python in the venv is properly configured"""
+        # Check if Python in the venv is properly configured
         if not self.use_venv_var.get():
             return True  # Skip check if not using venv
             
@@ -452,7 +481,7 @@ class Nuitkalicious:
                 self.output_text.insert('end', f"Error: Python executable not found in venv: {venv_python}\n")
                 return False
             
-            # Just verify the venv Python works
+            # Verify the venv Python works
             venv_cmd = f'"{venv_python}" --version'
             process = subprocess.run(venv_cmd, shell=True, capture_output=True, text=True)
             
@@ -519,7 +548,7 @@ class Nuitkalicious:
     def open_exe_folder(self):
         if self.exe_folder and os.path.exists(self.exe_folder):
             os.startfile(self.exe_folder)  # Windows
-            # For other platforms you might use:
+            # For other platforms use the following:
             # subprocess.run(['xdg-open', self.exe_folder])  # Linux
             # subprocess.run(['open', self.exe_folder])      # macOS
 
@@ -537,7 +566,7 @@ class Nuitkalicious:
         self.icon_label.config(text="No icon selected")
 
     def create_command(self):
-        """Create and display the Nuitka command without executing it"""
+        # Create and display the Nuitka command without executing it
         if not self.script_path.get():
             self.output_text.insert('end', "Error: No script selected\n")
             return
@@ -549,7 +578,101 @@ class Nuitkalicious:
         self.output_text.insert('end', f"Command created:\n{command}\n\n")
         self.output_text.see('end')
 
-# Move this outside the class, with proper indentation
+    def setup_advanced_options(self):
+        # Setup the advanced options tab
+        # Create scrollable frame for advanced options
+        canvas = tk.Canvas(self.advanced_frame)
+        scrollbar = ttk.Scrollbar(self.advanced_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>", 
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Compilation Options
+        compile_frame = ttk.LabelFrame(scrollable_frame, text="Compilation Options", padding=5)
+        compile_frame.pack(fill='x', padx=5, pady=5)
+
+        self.compilation_vars = {
+            'clang': tk.BooleanVar(),
+            'mingw64': tk.BooleanVar(),
+            'disable_console_ctrl_handler': tk.BooleanVar(),
+            'full_compat': tk.BooleanVar(),
+            'static_libpython': tk.BooleanVar()
+        }
+
+        for name, var in self.compilation_vars.items():
+            ttk.Checkbutton(compile_frame, text=name.replace('_', ' ').title(), 
+                           variable=var).pack(anchor='w')
+
+        # Module Options
+        module_frame = ttk.LabelFrame(scrollable_frame, text="Module Options", padding=5)
+        module_frame.pack(fill='x', padx=5, pady=5)
+
+        self.module_vars = {
+            'follow_stdlib': tk.BooleanVar(),
+            'prefer_source': tk.BooleanVar(),
+            'include_package_data': tk.BooleanVar(),
+            'python_flag_nosite': tk.BooleanVar(),
+            'remove_embedded': tk.BooleanVar()
+        }
+
+        for name, var in self.module_vars.items():
+            ttk.Checkbutton(module_frame, text=name.replace('_', ' ').title(), 
+                           variable=var).pack(anchor='w')
+
+        # Performance Options
+        perf_frame = ttk.LabelFrame(scrollable_frame, text="Performance Options", padding=5)
+        perf_frame.pack(fill='x', padx=5, pady=5)
+
+        self.perf_vars = {
+            'disable_ccache': tk.BooleanVar(),
+            'high_memory': tk.BooleanVar(),
+            'linux_onefile_icon': tk.BooleanVar(),
+            'macos_create_app_bundle': tk.BooleanVar()
+        }  # Removed 'lto' from this dict
+
+        for name, var in self.perf_vars.items():
+            ttk.Checkbutton(perf_frame, text=name.replace('_', ' ').title(), 
+                           variable=var).pack(anchor='w')
+
+        # Debug Options
+        debug_frame = ttk.LabelFrame(scrollable_frame, text="Debug Options", padding=5)
+        debug_frame.pack(fill='x', padx=5, pady=5)
+
+        self.debug_vars = {
+            'debug': tk.BooleanVar(),
+            'unstriped': tk.BooleanVar(),
+            'trace_execution': tk.BooleanVar(),
+            'disable_dll_dependency_cache': tk.BooleanVar(),
+            'experimental': tk.BooleanVar(),
+            'show_memory': tk.BooleanVar(),
+            'show_progress': tk.BooleanVar(),
+            'verbose': tk.BooleanVar(),
+        }
+
+        for name, var in self.debug_vars.items():
+            ttk.Checkbutton(debug_frame, text=name.replace('_', ' '). title(), 
+                           variable=var).pack(anchor='w')
+
+        # Optimization Options
+        optim_frame = ttk.LabelFrame(scrollable_frame, text="Optimization Options", padding=5)
+        optim_frame.pack(fill='x', padx=5, pady=5)
+
+        self.optimization_level = tk.StringVar(value="2")
+        ttk.Label(optim_frame, text="Optimization Level:").pack(side='left')
+        ttk.Spinbox(optim_frame, from_=0, to=3, width=5, 
+                    textvariable=self.optimization_level).pack(side='left', padx=5)
+
+        # Package all frames with scrollbar
+        canvas.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        scrollbar.pack(side="right", fill="y")
+
+# This stays outside the class, with proper indentation
 if __name__ == '__main__':
     root = tk.Tk()
     app = Nuitkalicious(root)
