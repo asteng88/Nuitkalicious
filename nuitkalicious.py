@@ -3,6 +3,7 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox
 import subprocess
 import threading
 import os
+from tkterm import Terminal
 
 # this block (9-14) ensures that the ICON is displayed on the taskbar in Windows
 try:
@@ -17,7 +18,7 @@ class Nuitkalicious:
     def __init__(self, root):
         self.root = root
         self.root.title("Nuitkalicious - Nuitka GUI")
-        self.root.geometry("750x820")
+        self.root.geometry("750x830")
         
         # Icon for the app - nuitkalicious.ico
         base_path = os.path.dirname(__file__)
@@ -45,6 +46,7 @@ class Nuitkalicious:
         self.resource_files = []  # Store resource file paths
         self.exe_folder = None  # Store the exe folder path
         self.icon_path = None  # Store icon path
+        self.venv_active = False  # Track if venv is active
         
         # Advanced options tab
         self.advanced_frame = ttk.Frame(self.notebook)
@@ -150,10 +152,12 @@ class Nuitkalicious:
         action_frame.pack(pady=5)
         
         # Compile button
-        ttk.Button(action_frame, text="Compile", command=self.compile).pack(side='left', padx=5)
+        self.compile_button = ttk.Button(action_frame, text="Compile", 
+                                       command=self.compile, state='disabled')
+        self.compile_button.pack(side='left', padx=5)
         
         # Create Command button
-        ttk.Button(action_frame, text="Create Command", command=self.create_command).pack(side='left', padx=5)
+        ttk.Button(action_frame, text="Create & Copy Command", command=self.create_command).pack(side='left', padx=5)
         
         # Open EXE folder button (disabled by default)
         self.open_exe_button = ttk.Button(action_frame, text="Open Executable Folder", 
@@ -169,7 +173,6 @@ class Nuitkalicious:
         self.script_path.set("")
         self.venv_path.set("")
         self.jobs_var.set("1")
-        self.output_text.delete('1.0', 'end')
         self.command_preview.delete('1.0', 'end')
         
         # Reset checkboxes
@@ -187,6 +190,9 @@ class Nuitkalicious:
         self.venv_browse_button.config(state='disabled')
         self.activate_venv_button.config(state='disabled')
         self.open_exe_button.config(state='disabled')
+
+        # Clear the terminal box
+        self.terminal.clear()
         
         # Clear icon
         self.icon_path = None
@@ -214,12 +220,19 @@ class Nuitkalicious:
             self.follow_stdlib_var.set(False)
         if hasattr(self, 'prefer_source_var'):
             self.prefer_source_var.set(False)
+        
+        self.venv_active = False
+        self.compile_button.config(state='disabled')
 
     def setup_output_panel(self, parent):
-        self.output_text = scrolledtext.ScrolledText(parent, height=6)
-        self.output_text.pack(expand=True, fill='both', padx=5, pady=5)
-
-        # Command preview pane to cut and paste if the user wants to run the command manually
+        # Replace scrolled text with terminal
+        terminal_frame = ttk.LabelFrame(parent, text="Terminal Output", padding=5)
+        terminal_frame.pack(expand=True, fill='both', padx=5, pady=5)
+        
+        self.terminal = Terminal(terminal_frame)
+        self.terminal.pack(expand=True, fill='both')
+        
+        # Keep command preview for reference
         self.command_preview = scrolledtext.ScrolledText(parent, height=6)
         self.command_preview.pack(fill='x', padx=5, pady=5)
         
@@ -237,10 +250,14 @@ class Nuitkalicious:
             self.venv_browse_button.config(state='normal')
             if os.path.exists(self.venv_path.get()):
                 self.activate_venv_button.config(state='normal')
+            self.compile_button.config(state='disabled')  # Disable compile until venv is activated
+            self.venv_active = False
         else:
             self.venv_entry.config(state='disabled')
             self.venv_browse_button.config(state='disabled')
             self.activate_venv_button.config(state='disabled')
+            self.compile_button.config(state='disabled')
+            self.venv_active = False
             
     def browse_venv(self):
         venv_dir = filedialog.askdirectory(title="Select Virtual Environment Directory")
@@ -252,38 +269,28 @@ class Nuitkalicious:
     def activate_venv(self):
         venv_path = self.venv_path.get()
         if not venv_path:
-            self.output_text.insert('end', "Error: No virtual environment path selected\n")
+            self.terminal.write("Error: No virtual environment path selected\n")
             return
             
         activate_script = os.path.join(venv_path, 'Scripts', 'activate')
         if not os.path.exists(activate_script):
-            self.output_text.insert('end', f"Error: Could not find activation script at {activate_script}\n")
+            self.terminal.write(f"Error: Could not find activation script at {activate_script}\n")
             return
             
         try:
-            command = f'cmd /c ""{activate_script}" && python --version"'
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                shell=True
-            )
+            # Run activation in terminal
+            self.terminal.write(f"Activating virtual environment at: {venv_path}\n")
+            self.terminal.run_command(f'"{activate_script}"')
             
-            self.output_text.insert('end', f"Activating virtual environment at: {venv_path}\n")
-            
-            output, _ = process.communicate()
-            if output:
-                if "not recognized" not in output and "Error" not in output:
-                    self.output_text.insert('end', f"Virtual environment activated successfully!\n")
-                    self.output_text.insert('end', f"Using: {output}\n")
-                else:
-                    self.output_text.insert('end', f"Error activating venv: {output}\n")
-            
-            self.output_text.see('end')
+            # Verify activation
+            self.terminal.run_command('python --version')
+            self.venv_active = True
+            self.compile_button.config(state='normal')
             
         except Exception as e:
-            self.output_text.insert('end', f"Error activating virtual environment: {str(e)}\n")
+            self.terminal.write(f"Error activating virtual environment: {str(e)}\n")
+            self.venv_active = False
+            self.compile_button.config(state='disabled')
             
     def add_resources(self):
         files = filedialog.askopenfilenames(
@@ -329,12 +336,27 @@ class Nuitkalicious:
     def build_command(self):
         cmd = []
         
-        # Use venv python directly instead of activation
-        if self.use_venv_var.get() and self.venv_path.get():
-            venv_python = self.get_venv_python()
-            cmd.append(f'"{venv_python}" -m nuitka')
+        # Check if we're running as a compiled executable
+        import sys
+        is_frozen = getattr(sys, 'frozen', False)
+        
+        # When running as compiled exe, use system Python for Nuitka
+        if is_frozen:
+            # Get system Python path
+            import subprocess
+            try:
+                result = subprocess.run(['where', 'python'], capture_output=True, text=True)
+                system_python = result.stdout.splitlines()[0] if result.returncode == 0 else 'python'
+                cmd.append(f'"{system_python}" -m nuitka')
+            except Exception:
+                cmd.append('python -m nuitka')
         else:
-            cmd.append('python -m nuitka')
+            # Normal behavior when running from source
+            if self.venv_active and self.venv_path.get():
+                venv_python = self.get_venv_python()
+                cmd.append(f'"{venv_python}" -m nuitka')
+            else:
+                cmd.append('python -m nuitka')
 
         # Add automatic yes for downloads
         cmd.append('--assume-yes-for-downloads')
@@ -394,52 +416,60 @@ class Nuitkalicious:
             return False
 
     def run_command(self, cmd, shell=True):
-        # Run a command and capture its output in real-time
         try:
+            # Use PIPE for stdout/stderr and disable buffering
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,  # Capture stderr separately
+                stderr=subprocess.PIPE,
+                shell=shell,
                 universal_newlines=True,
-                shell=shell
+                bufsize=0,  # Disable buffering
+                startupinfo=startupinfo
             )
             
-            # Function to read from a pipe and write to output
             def read_pipe(pipe):
-                for line in iter(pipe.readline, ''):
-                    self.output_text.insert('end', line)
-                    self.output_text.see('end')
-                    self.root.update_idletasks()
+                while True:
+                    char = pipe.read(1)
+                    if char == '' and process.poll() is not None:
+                        break
+                    if char:
+                        self.terminal.write(char)
+                        self.root.update_idletasks()
             
-            # Create threads for both stdout and stderr
             stdout_thread = threading.Thread(target=read_pipe, args=(process.stdout,))
             stderr_thread = threading.Thread(target=read_pipe, args=(process.stderr,))
             
-            # Start both threads
+            stdout_thread.daemon = True
+            stderr_thread.daemon = True
+            
             stdout_thread.start()
             stderr_thread.start()
             
-            # Wait for both threads to complete
+            return_code = process.wait()
+            
             stdout_thread.join()
             stderr_thread.join()
             
-            # Wait for process to complete and get return code
-            process.wait()
-            success = process.returncode == 0
-            
-            if success:
-                self.open_exe_button.config(state='normal')
-            
-            return success
+            return return_code == 0
             
         except Exception as e:
-            self.output_text.insert('end', f"Error executing command: {str(e)}\n")
+            self.terminal.write(f"Error executing command: {str(e)}\n")
             return False
 
     def install_nuitka(self):
         try:
             venv_python = self.get_venv_python()
-            self.output_text.insert('end', "Upgrading pip and installing wheel...\n")
+            self.terminal.write("Upgrading pip and installing wheel...\n")
+            
+            # Check Python version before installing
+            if not self.check_python_version_compatibility():
+                self.terminal.write("Warning: Installing Nuitka with mismatched Python versions may cause issues.\n")
             
             # Upgrade pip
             pip_cmd = f'"{venv_python}" -m pip install --upgrade pip'
@@ -452,7 +482,7 @@ class Nuitkalicious:
                 return False
             
             # Install Nuitka and dependencies
-            self.output_text.insert('end', "Installing Nuitka...\n")
+            self.terminal.write("Installing Nuitka...\n")
             nuitka_cmd = f'"{venv_python}" -m pip install --upgrade nuitka ordered-set'
             if not self.run_command(nuitka_cmd):
                 return False
@@ -460,90 +490,110 @@ class Nuitkalicious:
             # Verify installation
             verify_cmd = f'"{venv_python}" -c "import nuitka"'
             if not self.run_command(verify_cmd):
-                self.output_text.insert('end', "Nuitka installation verification failed.\n")
+                self.terminal.write("Nuitka installation verification failed.\n")
                 return False
             
-            self.output_text.insert('end', "Nuitka installed and verified successfully.\n")
+            self.terminal.write("Nuitka installed and verified successfully.\n")
             return True
                 
         except Exception as e:
-            self.output_text.insert('end', f"Error installing Nuitka: {str(e)}\n")
+            self.terminal.write(f"Error installing Nuitka: {str(e)}\n")
             return False
 
     def check_python_version_compatibility(self):
-        # Check if Python in the venv is properly configured
         if not self.use_venv_var.get():
             return True  # Skip check if not using venv
             
         try:
             venv_python = self.get_venv_python()
             if not os.path.exists(venv_python):
-                self.output_text.insert('end', f"Error: Python executable not found in venv: {venv_python}\n")
+                self.terminal.write(f"Error: Python executable not found in venv: {venv_python}\n")
                 return False
             
-            # Verify the venv Python works
-            venv_cmd = f'"{venv_python}" --version'
+            # Only get venv Python version
+            venv_cmd = f'"{venv_python}" -c "import sys; print(sys.version)"'
             process = subprocess.run(venv_cmd, shell=True, capture_output=True, text=True)
             
             if process.returncode == 0:
-                self.output_text.insert('end', f"Using {process.stdout.strip()}\n")
+                version_info = process.stdout.strip()
+                self.terminal.write(f"Using virtual environment Python: {version_info}\n")
                 return True
             else:
-                self.output_text.insert('end', f"Error running Python in venv: {process.stderr}\n")
+                self.terminal.write(f"Error checking Python version: {process.stderr}\n")
                 return False
                 
         except Exception as e:
-            self.output_text.insert('end', f"Error checking Python version: {str(e)}\n")
+            self.terminal.write(f"Error checking Python: {str(e)}\n")
             return False
 
     def compile(self):
+        if not self.venv_active:
+            messagebox.showwarning("Virtual Environment Required", 
+                "Please select and activate a virtual environment before compiling.")
+            return
+
         if not self.script_path.get():
-            self.output_text.insert('end', "Error: No script selected\n")
+            self.terminal.write("Error: No script selected\n")
             return
 
         # Reset button state
         self.open_exe_button.config(state='disabled')
         
-        # Clear output
-        self.output_text.delete('1.0', 'end')
+        # Clear terminal
+        self.terminal.clear()
         
-        # Check Python version compatibility
-        if not self.check_python_version_compatibility():
-            if not messagebox.askyesno("Version Mismatch", 
-                "Python version mismatch detected. This may cause compilation errors.\nDo you want to continue anyway?"):
-                return
-
         # Store the exe folder path
         script_dir = os.path.dirname(self.script_path.get())
         self.exe_folder = script_dir
 
+        # Verify venv is still valid
+        venv_python = self.get_venv_python()
+        if not os.path.exists(venv_python):
+            self.terminal.write("Error: Virtual environment Python not found. Please reactivate venv.\n")
+            return
+            
         try:
+            # Check if Nuitka is installed in the venv
             if not self.check_nuitka_installed():
-                self.output_text.insert('end', "Nuitka is not installed. Installing now...\n")
+                self.terminal.write("Nuitka is not installed in virtual environment. Installing now...\n")
                 if not self.install_nuitka():
-                    self.output_text.insert('end', "Failed to install Nuitka. Aborting compilation.\n")
+                    self.terminal.write("Failed to install Nuitka. Aborting compilation.\n")
                     return
-                self.output_text.insert('end', "Nuitka installed successfully.\n")
+                self.terminal.write("Nuitka installed successfully.\n")
 
+            # Display which Python we're using (moved after venv_python is defined)
+            self.terminal.write(f"Using Python from: {venv_python}\n\n")
+
+            # Rest of compilation process
             cmd = self.build_command()
             command = ' '.join(cmd)
             self.command_preview.delete('1.0', 'end')
             self.command_preview.insert('end', command)
-            self.output_text.insert('end', f"Executing command:\n{command}\n\n")
+            self.terminal.write(f"Executing command:\n{command}\n\n")
             
             def compile_thread():
-                success = self.run_command(command)
-                # Show completion message in the main thread
-                self.root.after(0, lambda: messagebox.showinfo("Compilation Complete", 
-                    "Compilation completed successfully!" if success else "Compilation completed with errors!"))
+                try:
+                    success = self.run_command(command)
+                    if success:
+                        self.root.after(0, lambda: [
+                            self.open_exe_button.config(state='normal'),
+                            messagebox.showinfo("Compilation Complete", "Compilation completed successfully!")
+                        ])
+                    else:
+                        self.root.after(0, lambda: 
+                            messagebox.showerror("Compilation Error", 
+                                "Compilation completed with errors! Check the terminal output for details.")
+                        )
+                except Exception as e:
+                    self.root.after(0, lambda: 
+                        messagebox.showerror("Compilation Error", str(e))
+                    )
             
             threading.Thread(target=compile_thread, daemon=True).start()
             
         except Exception as e:
-            error_msg = f"Compilation error: {str(e)}\n"
-            self.output_text.insert('end', error_msg)
-            self.output_text.see('end')
-            messagebox.showerror("Compilation Error", error_msg)
+            self.terminal.write(f"Compilation error: {str(e)}\n")
+            messagebox.showerror("Compilation Error", str(e))
 
     def open_exe_folder(self):
         if self.exe_folder and os.path.exists(self.exe_folder):
@@ -568,15 +618,24 @@ class Nuitkalicious:
     def create_command(self):
         # Create and display the Nuitka command without executing it
         if not self.script_path.get():
-            self.output_text.insert('end', "Error: No script selected\n")
+            self.terminal.write("Error: No script selected\n")
             return
             
         cmd = self.build_command()
         command = ' '.join(cmd)
+        
+        # Update command preview and terminal
         self.command_preview.delete('1.0', 'end')
         self.command_preview.insert('end', command)
-        self.output_text.insert('end', f"Command created:\n{command}\n\n")
-        self.output_text.see('end')
+        self.terminal.write(f"Command created:\n{command}\n\n")
+        self.terminal.see('end')
+        
+        # Copy to clipboard
+        self.root.clipboard_clear()
+        self.root.clipboard_append(command)
+        
+        # Show confirmation
+        messagebox.showinfo("Command Copied", "Command has been created and copied to clipboard.")
 
     def setup_advanced_options(self):
         # Setup the advanced options tab
