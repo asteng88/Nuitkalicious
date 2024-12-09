@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox
 import subprocess
-import threading
 import os
 
 # this block (9-14) ensures that the ICON is displayed on the taskbar in Windows
@@ -55,6 +54,16 @@ class Nuitkalicious:
         self.setup_advanced_options()
 
     def setup_basic_options(self):
+        # Initialize BooleanVar variables first
+        self.standalone_var = tk.BooleanVar()
+        self.onefile_var = tk.BooleanVar()
+        self.remove_output_var = tk.BooleanVar()
+        self.no_console_var = tk.BooleanVar()
+        self.follow_imports_var = tk.BooleanVar()
+        self.lto_var = tk.BooleanVar()
+        self.tkinter_var = tk.BooleanVar()
+        self.use_venv_var = tk.BooleanVar()
+
         # File selection
         file_frame = ttk.LabelFrame(self.basic_frame, text="Python File", padding=5)
         file_frame.pack(fill='x', padx=5, pady=5)
@@ -74,12 +83,15 @@ class Nuitkalicious:
         right_column.pack(side='left', fill='both', expand=True, padx=5)
         
         # Left column - Basic options
-        self.standalone_var = tk.BooleanVar()
-        ttk.Checkbutton(left_column, text="Standalone", variable=self.standalone_var).pack(anchor='w')
+        self.standalone_checkbox = ttk.Checkbutton(left_column, text="Standalone", 
+                                                 variable=self.standalone_var, 
+                                                 command=self.handle_standalone_change)
+        self.standalone_checkbox.pack(anchor='w')
         
-        self.onefile_var = tk.BooleanVar()
-        ttk.Checkbutton(left_column, text="One File", variable=self.onefile_var, 
-                       command=self.handle_onefile_change).pack(anchor='w')
+        self.onefile_checkbox = ttk.Checkbutton(left_column, text="One File", 
+                                               variable=self.onefile_var, 
+                                               command=self.handle_onefile_change)
+        self.onefile_checkbox.pack(anchor='w')
         
         self.remove_output_var = tk.BooleanVar()
         ttk.Checkbutton(left_column, text="Remove Output", variable=self.remove_output_var).pack(anchor='w')
@@ -330,10 +342,12 @@ class Nuitkalicious:
             cmd.append(f'--output-dir="{script_dir}"')
 
         # Add all the options
-        if self.standalone_var.get():
-            cmd.append('--standalone')
         if self.onefile_var.get():
+            # For onefile, we need both flags
+            cmd.append('--standalone')
             cmd.append('--onefile')
+        elif self.standalone_var.get():
+            cmd.append('--standalone')
         if self.remove_output_var.get():
             cmd.append('--remove-output')
         if self.no_console_var.get():
@@ -431,7 +445,21 @@ class Nuitkalicious:
         # Reset button state
         self.open_exe_button.config(state='disabled')
         
-        # Update status instead of clearing terminal
+        # Check and install Nuitka if using venv
+        if self.use_venv_var.get():
+            venv_python = self.get_venv_python()
+            if not self.check_nuitka_installed(venv_python):
+                if not messagebox.askyesno("Nuitka Not Found", 
+                    "Nuitka is not installed in the selected virtual environment. Would you like to install it?"):
+                    self.status_label.config(text="Compilation cancelled - Nuitka not installed")
+                    return
+                if not self.install_nuitka(venv_python):
+                    return
+            else:
+                # If Nuitka is installed, proceed without showing the installation prompt
+                self.status_label.config(text="Nuitka found, proceeding with compilation...")
+
+        # Update status
         self.status_label.config(text="Starting compilation...")
         
         # Store the exe folder path
@@ -535,12 +563,6 @@ class Nuitkalicious:
 
         # Start monitoring
         self.root.after(1000, check_status)
-
-    # Remove the following methods as they're no longer needed:
-    # - check_nuitka_installed
-    # - install_nuitka
-    # - check_python_version_compatibility
-    # - run_command
 
     def open_exe_folder(self):
         if self.exe_folder and os.path.exists(self.exe_folder):
@@ -712,12 +734,83 @@ class Nuitkalicious:
         canvas.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         scrollbar.pack(side="right", fill="y")
 
+    def handle_standalone_change(self):
+        """Handle standalone checkbox changes"""
+        if not self.standalone_var.get() and self.onefile_var.get():
+            # Prevent standalone from being unchecked if onefile is selected
+            self.standalone_var.set(True)
+            messagebox.showinfo("Info", "Standalone mode is required for onefile builds")
+        elif not self.standalone_var.get():
+            self.onefile_checkbox.config(state='normal')
+
     def handle_onefile_change(self):
+        """Handle onefile checkbox changes - make mutually exclusive with standalone and manage dependencies"""
         if self.onefile_var.get():
             self.follow_imports_var.set(False)
             self.follow_imports_checkbox.config(state='disabled')
+            # Enable standalone automatically for onefile (required)
+            self.standalone_var.set(True)
+            self.standalone_checkbox.config(state='disabled')
         else:
             self.follow_imports_checkbox.config(state='normal')
+            self.standalone_checkbox.config(state='normal')
+            # Don't automatically unset standalone when disabling onefile
+            # as user might want standalone without onefile
+
+    def check_nuitka_installed(self, python_path):
+        """Check if Nuitka is installed in the virtual environment"""
+        try:
+            # Create a separate process without shell=True for better security
+            result = subprocess.run(
+                [python_path, "-m", "nuitka", "--version"],
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            
+            # If we can get the version, Nuitka is installed
+            if result.returncode == 0:
+                version = result.stdout.strip()
+                self.status_label.config(text=f"Found Nuitka {version}")
+                return True
+                
+            self.status_label.config(text="Nuitka not found in environment")
+            return False
+            
+        except Exception as e:
+            self.status_label.config(text=f"Error checking Nuitka: {str(e)}")
+            return False
+
+    def install_nuitka(self, python_path):
+        """Install Nuitka in the virtual environment"""
+        try:
+            # First upgrade pip to ensure compatibility
+            self.status_label.config(text="Installing Nuitka...\nUpgrading pip...")
+            upgrade_cmd = f'"{python_path}" -m pip install --upgrade pip'
+            result = subprocess.run(upgrade_cmd, shell=True, capture_output=True, text=True)
+            if result.returncode != 0:
+                self.status_label.config(text=f"Warning: Pip upgrade failed: {result.stderr}")
+                return False
+            
+            # Install Nuitka
+            self.status_label.config(text="Running: pip install nuitka")
+            cmd = f'"{python_path}" -m pip install nuitka'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                self.status_label.config(text="Nuitka installed successfully")
+                return True
+            else:
+                error_msg = f"Failed to install Nuitka:\n{result.stderr}"
+                self.status_label.config(text="Failed to install Nuitka")
+                messagebox.showerror("Installation Error", error_msg)
+                return False
+                
+        except Exception as e:
+            error_msg = f"Error installing Nuitka: {str(e)}"
+            self.status_label.config(text="Failed to install Nuitka")
+            messagebox.showerror("Installation Error", error_msg)
+            return False
 
 # This stays outside the class, with proper indentation
 if __name__ == '__main__':
