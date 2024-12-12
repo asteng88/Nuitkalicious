@@ -1,60 +1,80 @@
+"""
+Nuitkalicious - A GUI for Nuitka Python Compiler
+Author: asteng88
+Description: GUI application to simplify the use of Nuitka compiler for Python
+"""
+
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox
 import subprocess
 import os
 
-# this block (9-14) ensures that the ICON is displayed on the taskbar in Windows
+# Windows taskbar icon support
 try:
     from ctypes import windll
-    my_appid = 'com.asteng88.nuitkalicious.nuitkalicious.1.0.0'  # arbitrary string
+    my_appid = 'com.asteng88.nuitkalicious.nuitkalicious.1.0.0'
     windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_appid)
 except ImportError:
     pass
 
 class Nuitkalicious:
+    # Main application class for Nuitkalicious
 
     def __init__(self, root):
-        # Move variable initialization to the top
-        self.uninstall_button = None  # Just initialize as None here
+        """Initialize the application"""
+        # Initialize instance variables
+        self._init_variables()
+        
+        # Setup main window
+        self._setup_main_window(root)
+        
+        # Setup UI components
+        self._setup_ui()
+
+    def _init_variables(self):
+        """Initialize all instance variables"""
+        self.uninstall_button = None
         self.resource_files = []
         self.exe_folder = None
         self.icon_path = None
         self.venv_active = True
-        
+
+    def _setup_main_window(self, root):
+        """Setup the main application window"""
         self.root = root
         self.root.title("Nuitkalicious - Nuitka GUI")
         self.root.geometry("700x765")
-        
-        # Icon for the app - nuitkalicious.ico
+        self._setup_app_icon()
+
+    def _setup_app_icon(self):
+        """Setup application icon"""
         base_path = os.path.dirname(__file__)
         os.chdir(base_path)
         icon_path = os.path.join(base_path, 'nuitkalicious.ico')
-        
-        if (os.path.exists(icon_path)):
+        if os.path.exists(icon_path):
             try:
                 self.root.iconbitmap(icon_path)
             except tk.TclError:
                 print(f"Could not load icon: {icon_path}")
 
+    def _setup_ui(self):
+        """Setup the main UI components"""
         # Create notebook for tabs
-        self.notebook = ttk.Notebook(root)
+        self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(expand=True, fill='both', padx=5, pady=5)
         
-        # Basic options tab
+        # Setup basic options tab
         self.basic_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.basic_frame, text='Basic Options')
-        
-        # Output panel under Basic Options tab  
         self.setup_basic_options()
         self.setup_output_panel(self.basic_frame)
         
-        # Advanced options tab
+        # Setup advanced options tab
         self.advanced_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.advanced_frame, text='Advanced Options')
-        
-        # Setup advanced options
         self.setup_advanced_options()
 
+    # Group 1: UI Setup Methods
     def setup_basic_options(self):
         # Initialize BooleanVar variables first
         self.standalone_var = tk.BooleanVar()
@@ -112,6 +132,9 @@ class Nuitkalicious:
         
         self.tkinter_var = tk.BooleanVar()
         ttk.Checkbutton(right_column, text="Enable Tkinter Support", variable=self.tkinter_var).pack(anchor='w')
+        
+        self.pyqt6_var = tk.BooleanVar()
+        ttk.Checkbutton(right_column, text="Enable PyQt6 Support", variable=self.pyqt6_var).pack(anchor='w')
         
         jobs_frame = ttk.Frame(right_column)
         jobs_frame.pack(fill='x', pady=5)
@@ -186,6 +209,144 @@ class Nuitkalicious:
         # Add Clear All button
         ttk.Button(action_frame, text="Clear All", command=self.clear_all).pack(side='left', padx=5)
         
+    def setup_output_panel(self, parent):
+        status_frame = ttk.LabelFrame(parent, text="Status", padding=5)
+        status_frame.pack(fill='x', padx=5, pady=5)
+        
+        self.status_label = ttk.Label(status_frame, text="Ready")
+        self.status_label.pack(fill='x', padx=5, pady=5)
+        
+        # Keep command preview for compatibility
+        self.command_preview = scrolledtext.ScrolledText(parent, height=0)  # Hidden but keeps references working
+
+    def setup_advanced_options(self):
+        # Setup the advanced options tab
+        # Create scrollable frame for advanced options
+        canvas = tk.Canvas(self.advanced_frame)
+        scrollbar = ttk.Scrollbar(self.advanced_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>", 
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Create container frame for columns
+        columns_frame = ttk.Frame(scrollable_frame)
+        columns_frame.pack(expand=True, fill='both')
+
+        # Create three columns
+        left_column = ttk.Frame(columns_frame)
+        left_column.pack(side='left', fill='both', expand=True, padx=2)
+        
+        middle_column = ttk.Frame(columns_frame)
+        middle_column.pack(side='left', fill='both', expand=True, padx=2)
+        
+        right_column = ttk.Frame(columns_frame)
+        right_column.pack(side='left', fill='both', expand=True, padx=2)
+
+        # Create a list to store all frames for later resizing
+        option_frames = []
+
+        # Column 1: Compilation and Module Options
+        compile_frame = ttk.LabelFrame(left_column, text="Compilation Options", padding=5)
+        compile_frame.pack(fill='x', pady=5)
+        option_frames.append(compile_frame)
+
+        self.compilation_vars = {
+            'clang': tk.BooleanVar(),
+            'mingw64': tk.BooleanVar(),
+            'disable_console_ctrl_handler': tk.BooleanVar(),
+            'full_compat': tk.BooleanVar(),
+            'static_libpython': tk.BooleanVar()
+        }
+
+        for name, var in self.compilation_vars.items():
+            ttk.Checkbutton(compile_frame, text=name.replace('_', ' ').title(), 
+                           variable=var).pack(anchor='w')
+
+        module_frame = ttk.LabelFrame(left_column, text="Module Options", padding=5)
+        module_frame.pack(fill='x', pady=5)
+        option_frames.append(module_frame)
+
+        self.module_vars = {
+            'follow_stdlib': tk.BooleanVar(),
+            'prefer_source': tk.BooleanVar(),
+            'include_package_data': tk.BooleanVar(),
+            'python_flag_nosite': tk.BooleanVar(),
+            'remove_embedded': tk.BooleanVar()
+        }
+
+        for name, var in self.module_vars.items():
+            ttk.Checkbutton(module_frame, text=name.replace('_', ' ').title(), 
+                           variable=var).pack(anchor='w')
+
+        # Column 2: Performance and Optimization Options
+        perf_frame = ttk.LabelFrame(middle_column, text="Performance Options", padding=5)
+        perf_frame.pack(fill='x', pady=5)
+        option_frames.append(perf_frame)
+
+        self.perf_vars = {
+            'disable_ccache': tk.BooleanVar(),
+            'high_memory': tk.BooleanVar(),
+            'linux_onefile_icon': tk.BooleanVar(),
+            'macos_create_app_bundle': tk.BooleanVar()
+        }
+
+        for name, var in self.perf_vars.items():
+            ttk.Checkbutton(perf_frame, text=name.replace('_', ' ').title(), 
+                           variable=var).pack(anchor='w')
+
+        optim_frame = ttk.LabelFrame(middle_column, text="Optimization Options", padding=5)
+        optim_frame.pack(fill='x', pady=5)
+        option_frames.append(optim_frame)
+
+        self.optimization_level = tk.StringVar(value="2")
+        ttk.Label(optim_frame, text="Optimization Level:").pack(side='left')
+        ttk.Spinbox(optim_frame, from_=0, to=3, width=5, 
+                    textvariable=self.optimization_level).pack(side='left', padx=5)
+
+        # Column 3: Debug Options
+        debug_frame = ttk.LabelFrame(right_column, text="Debug Options", padding=5)
+        debug_frame.pack(fill='x', pady=5)
+        option_frames.append(debug_frame)
+
+        self.debug_vars = {
+            'debug': tk.BooleanVar(),
+            'unstriped': tk.BooleanVar(),
+            'trace_execution': tk.BooleanVar(),
+            'disable_dll_dependency_cache': tk.BooleanVar(),
+            'experimental': tk.BooleanVar(),
+            'show_memory': tk.BooleanVar(),
+            'show_progress': tk.BooleanVar(),
+            'verbose': tk.BooleanVar(),
+        }
+
+        for name, var in self.debug_vars.items():
+            ttk.Checkbutton(debug_frame, text=name.replace('_', ' '). title(), 
+                           variable=var).pack(anchor='w')
+
+        # Wait for all frames to be drawn
+        self.root.update_idletasks()
+
+        # Find the maximum width and height among all frames
+        max_width = max(frame.winfo_reqwidth() for frame in option_frames)
+        max_height = max(frame.winfo_reqheight() for frame in option_frames)
+
+        # Set all frames to the maximum size
+        for frame in option_frames:
+            frame.configure(width=max_width, height=max_height)
+            # Prevent the frame from shrinking
+            frame.pack_propagate(False)
+
+        # Package all frames with scrollbar
+        canvas.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        scrollbar.pack(side="right", fill="y")
+
+    # Group 2: Event Handlers
     def clear_all(self):
         # Reset all fields and checkboxes to their default states
         # Clear text fields
@@ -201,6 +362,7 @@ class Nuitkalicious:
         self.no_console_var.set(False)
         self.follow_imports_var.set(False)
         self.tkinter_var.set(False)
+        self.pyqt6_var.set(False)
         self.use_venv_var.set(False)
         self.lto_var.set(False)
         
@@ -241,16 +403,6 @@ class Nuitkalicious:
             self.prefer_source_var.set(False)
         
         self.venv_active = False
-
-    def setup_output_panel(self, parent):
-        status_frame = ttk.LabelFrame(parent, text="Status", padding=5)
-        status_frame.pack(fill='x', padx=5, pady=5)
-        
-        self.status_label = ttk.Label(status_frame, text="Ready")
-        self.status_label.pack(fill='x', padx=5, pady=5)
-        
-        # Keep command preview for compatibility
-        self.command_preview = scrolledtext.ScrolledText(parent, height=0)  # Hidden but keeps references working
 
     def browse_file(self):
         filename = filedialog.askopenfilename(
@@ -308,22 +460,145 @@ class Nuitkalicious:
             self.resource_files.pop(idx)
             self.resource_listbox.delete(idx)
             
-    def get_venv_python(self):
-        # Get the python executable path for the selected venv
-        if self.use_venv_var.get() and self.venv_path.get():
-            return os.path.join(self.venv_path.get(), 'Scripts', 'python.exe')
-        return 'python'
+    def select_icon(self):
+        icon_file = filedialog.askopenfilename(
+            title="Select Icon File",
+            filetypes=(("Icon files", "*.ico"), ("All files", "*.*"))
+        )
+        if icon_file:
+            self.icon_path = icon_file
+            self.icon_label.config(text=os.path.basename(icon_file))
+            
+    def clear_icon(self):
+        self.icon_path = None
+        self.icon_label.config(text="No icon selected")
 
-    def run_in_venv(self, command):
-        # Run a command in the context of the selected venv
-        if self.use_venv_var.get() and self.venv_path.get():
-            venv_python = self.get_venv_python()
-            if not os.path.exists(venv_python):
-                raise FileNotFoundError(f"Python executable not found in venv: {venv_python}")
-            # Use the venv's Python directly instead of activation
-            return f'"{venv_python}" {command}'
-        return f'python {command}'
+    def handle_standalone_change(self):
+        # Handle standalone checkbox changes
+        if not self.standalone_var.get() and self.onefile_var.get():
+            # Prevent standalone from being unchecked if onefile is selected
+            self.standalone_var.set(True)
+            messagebox.showinfo("Info", "Standalone mode is required for onefile builds")
+        elif not self.standalone_var.get():
+            self.onefile_checkbox.config(state='normal')
 
+    def handle_onefile_change(self):
+        # Handle onefile checkbox changes - make mutually exclusive with standalone and manage dependencies
+        if self.onefile_var.get():
+            self.follow_imports_var.set(False)
+            self.follow_imports_checkbox.config(state='disabled')
+            # Enable standalone automatically for onefile (required)
+            self.standalone_var.set(True)
+            self.standalone_checkbox.config(state='disabled')
+        else:
+            self.follow_imports_checkbox.config(state='normal')
+            self.standalone_checkbox.config(state='normal')
+            # Don't automatically unset standalone when disabling onefile
+            # as user might want standalone without onefile
+
+    # Group 3: Nuitka Operations
+    def check_nuitka_installed(self, python_path):
+        # Check if Nuitka is installed in the virtual environment
+        try:
+            result = subprocess.run(
+                [python_path, "-m", "nuitka", "--version"],
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            
+            if result.returncode == 0:
+                version = result.stdout.strip()
+                self.status_label.config(text=f"Found Nuitka {version}")
+                self.uninstall_button.config(state='normal')
+                return True
+                
+            self.status_label.config(text="Nuitka not found in environment")
+            self.uninstall_button.config(state='disabled')
+            return False
+            
+        except Exception as e:
+            self.status_label.config(text=f"Error checking Nuitka: {str(e)}")
+            self.uninstall_button.config(state='disabled')
+            return False
+
+    def install_nuitka(self, python_path):
+        # Install Nuitka in the virtual environment
+        try:
+            # Update status and force GUI refresh
+            self.status_label.config(text="Installing Nuitka... Please wait")
+            self.root.update_idletasks()  # Force GUI update
+            
+            cmd = f'"{python_path}" -m pip install nuitka'
+            process = subprocess.run(
+                cmd, 
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            
+            if process.returncode == 0:
+                self.status_label.config(text="Nuitka installed successfully!")
+                if hasattr(self, 'uninstall_button') and self.uninstall_button:
+                    self.uninstall_button.config(state='normal')
+                messagebox.showinfo("Success", "Nuitka has been successfully installed!")
+                return True
+            else:
+                error_msg = f"Failed to install Nuitka:\n{process.stderr}"
+                self.status_label.config(text="Failed to install Nuitka")
+                messagebox.showerror("Installation Error", error_msg)
+                return False
+                
+        except Exception as e:
+            error_msg = f"Error installing Nuitka: {str(e)}"
+            self.status_label.config(text="Failed to install Nuitka")
+            messagebox.showerror("Installation Error", error_msg)
+            return False
+
+    def uninstall_nuitka(self):
+        # Uninstall Nuitka from the virtual environment
+        if not self.venv_path.get():
+            return
+            
+        if not messagebox.askyesno("Confirm Uninstall", 
+                                  "Are you sure you want to uninstall Nuitka from this virtual environment?"):
+            return
+            
+        try:
+            python_path = self.get_venv_python()
+            self.status_label.config(text="Uninstalling Nuitka...")
+            
+            cmd = f'"{python_path}" -m pip uninstall nuitka -y'
+            process = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True
+            )
+            
+            # Monitor the uninstallation progress
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    self.status_label.config(text=f"Uninstalling...\n{output.strip()}")
+                    self.root.update()
+            
+            if process.returncode == 0:
+                self.status_label.config(text="Nuitka has been uninstalled")
+                self.uninstall_button.config(state='disabled')
+                messagebox.showinfo("Success", "Nuitka has been successfully uninstalled!")
+            else:
+                self.status_label.config(text="Failed to uninstall Nuitka")
+                messagebox.showerror("Error", "Failed to uninstall Nuitka")
+                
+        except Exception as e:
+            self.status_label.config(text=f"Error uninstalling Nuitka: {str(e)}")
+            messagebox.showerror("Error", f"Error uninstalling Nuitka: {str(e)}")
+
+    # Group 4: Command Building and Execution
     def build_command(self):
         cmd = []
         
@@ -374,6 +649,8 @@ class Nuitkalicious:
             cmd.append('--follow-imports')
         if self.tkinter_var.get():
             cmd.append('--enable-plugin=tk-inter')
+        if self.pyqt6_var.get():
+            cmd.append('--enable-plugin=pyqt6')
         if self.lto_var.get():  # Updated LTO option to include value
             cmd.append('--lto=yes')
         if self.jobs_var.get():
@@ -597,19 +874,6 @@ class Nuitkalicious:
             # subprocess.run(['xdg-open', self.exe_folder])  # Linux
             # subprocess.run(['open', self.exe_folder])      # macOS
 
-    def select_icon(self):
-        icon_file = filedialog.askopenfilename(
-            title="Select Icon File",
-            filetypes=(("Icon files", "*.ico"), ("All files", "*.*"))
-        )
-        if icon_file:
-            self.icon_path = icon_file
-            self.icon_label.config(text=os.path.basename(icon_file))
-            
-    def clear_icon(self):
-        self.icon_path = None
-        self.icon_label.config(text="No icon selected")
-
     def create_command(self):
         # Update to use status label instead of terminal output
         if not self.script_path.get():
@@ -633,258 +897,24 @@ class Nuitkalicious:
         # Show confirmation
         messagebox.showinfo("Command Copied", "Command has been created and copied to clipboard.")
 
-    def setup_advanced_options(self):
-        # Setup the advanced options tab
-        # Create scrollable frame for advanced options
-        canvas = tk.Canvas(self.advanced_frame)
-        scrollbar = ttk.Scrollbar(self.advanced_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+    # Group 5: Utility Methods
+    def get_venv_python(self):
+        # Get the python executable path for the selected venv
+        if self.use_venv_var.get() and self.venv_path.get():
+            return os.path.join(self.venv_path.get(), 'Scripts', 'python.exe')
+        return 'python'
 
-        scrollable_frame.bind(
-            "<Configure>", 
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+    def run_in_venv(self, command):
+        # Run a command in the context of the selected venv
+        if self.use_venv_var.get() and self.venv_path.get():
+            venv_python = self.get_venv_python()
+            if not os.path.exists(venv_python):
+                raise FileNotFoundError(f"Python executable not found in venv: {venv_python}")
+            # Use the venv's Python directly instead of activation
+            return f'"{venv_python}" {command}'
+        return f'python {command}'
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Create container frame for columns
-        columns_frame = ttk.Frame(scrollable_frame)
-        columns_frame.pack(expand=True, fill='both')
-
-        # Create three columns
-        left_column = ttk.Frame(columns_frame)
-        left_column.pack(side='left', fill='both', expand=True, padx=2)
-        
-        middle_column = ttk.Frame(columns_frame)
-        middle_column.pack(side='left', fill='both', expand=True, padx=2)
-        
-        right_column = ttk.Frame(columns_frame)
-        right_column.pack(side='left', fill='both', expand=True, padx=2)
-
-        # Create a list to store all frames for later resizing
-        option_frames = []
-
-        # Column 1: Compilation and Module Options
-        compile_frame = ttk.LabelFrame(left_column, text="Compilation Options", padding=5)
-        compile_frame.pack(fill='x', pady=5)
-        option_frames.append(compile_frame)
-
-        self.compilation_vars = {
-            'clang': tk.BooleanVar(),
-            'mingw64': tk.BooleanVar(),
-            'disable_console_ctrl_handler': tk.BooleanVar(),
-            'full_compat': tk.BooleanVar(),
-            'static_libpython': tk.BooleanVar()
-        }
-
-        for name, var in self.compilation_vars.items():
-            ttk.Checkbutton(compile_frame, text=name.replace('_', ' ').title(), 
-                           variable=var).pack(anchor='w')
-
-        module_frame = ttk.LabelFrame(left_column, text="Module Options", padding=5)
-        module_frame.pack(fill='x', pady=5)
-        option_frames.append(module_frame)
-
-        self.module_vars = {
-            'follow_stdlib': tk.BooleanVar(),
-            'prefer_source': tk.BooleanVar(),
-            'include_package_data': tk.BooleanVar(),
-            'python_flag_nosite': tk.BooleanVar(),
-            'remove_embedded': tk.BooleanVar()
-        }
-
-        for name, var in self.module_vars.items():
-            ttk.Checkbutton(module_frame, text=name.replace('_', ' ').title(), 
-                           variable=var).pack(anchor='w')
-
-        # Column 2: Performance and Optimization Options
-        perf_frame = ttk.LabelFrame(middle_column, text="Performance Options", padding=5)
-        perf_frame.pack(fill='x', pady=5)
-        option_frames.append(perf_frame)
-
-        self.perf_vars = {
-            'disable_ccache': tk.BooleanVar(),
-            'high_memory': tk.BooleanVar(),
-            'linux_onefile_icon': tk.BooleanVar(),
-            'macos_create_app_bundle': tk.BooleanVar()
-        }
-
-        for name, var in self.perf_vars.items():
-            ttk.Checkbutton(perf_frame, text=name.replace('_', ' ').title(), 
-                           variable=var).pack(anchor='w')
-
-        optim_frame = ttk.LabelFrame(middle_column, text="Optimization Options", padding=5)
-        optim_frame.pack(fill='x', pady=5)
-        option_frames.append(optim_frame)
-
-        self.optimization_level = tk.StringVar(value="2")
-        ttk.Label(optim_frame, text="Optimization Level:").pack(side='left')
-        ttk.Spinbox(optim_frame, from_=0, to=3, width=5, 
-                    textvariable=self.optimization_level).pack(side='left', padx=5)
-
-        # Column 3: Debug Options
-        debug_frame = ttk.LabelFrame(right_column, text="Debug Options", padding=5)
-        debug_frame.pack(fill='x', pady=5)
-        option_frames.append(debug_frame)
-
-        self.debug_vars = {
-            'debug': tk.BooleanVar(),
-            'unstriped': tk.BooleanVar(),
-            'trace_execution': tk.BooleanVar(),
-            'disable_dll_dependency_cache': tk.BooleanVar(),
-            'experimental': tk.BooleanVar(),
-            'show_memory': tk.BooleanVar(),
-            'show_progress': tk.BooleanVar(),
-            'verbose': tk.BooleanVar(),
-        }
-
-        for name, var in self.debug_vars.items():
-            ttk.Checkbutton(debug_frame, text=name.replace('_', ' '). title(), 
-                           variable=var).pack(anchor='w')
-
-        # Wait for all frames to be drawn
-        self.root.update_idletasks()
-
-        # Find the maximum width and height among all frames
-        max_width = max(frame.winfo_reqwidth() for frame in option_frames)
-        max_height = max(frame.winfo_reqheight() for frame in option_frames)
-
-        # Set all frames to the maximum size
-        for frame in option_frames:
-            frame.configure(width=max_width, height=max_height)
-            # Prevent the frame from shrinking
-            frame.pack_propagate(False)
-
-        # Package all frames with scrollbar
-        canvas.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-        scrollbar.pack(side="right", fill="y")
-
-    def handle_standalone_change(self):
-        # Handle standalone checkbox changes
-        if not self.standalone_var.get() and self.onefile_var.get():
-            # Prevent standalone from being unchecked if onefile is selected
-            self.standalone_var.set(True)
-            messagebox.showinfo("Info", "Standalone mode is required for onefile builds")
-        elif not self.standalone_var.get():
-            self.onefile_checkbox.config(state='normal')
-
-    def handle_onefile_change(self):
-        # Handle onefile checkbox changes - make mutually exclusive with standalone and manage dependencies
-        if self.onefile_var.get():
-            self.follow_imports_var.set(False)
-            self.follow_imports_checkbox.config(state='disabled')
-            # Enable standalone automatically for onefile (required)
-            self.standalone_var.set(True)
-            self.standalone_checkbox.config(state='disabled')
-        else:
-            self.follow_imports_checkbox.config(state='normal')
-            self.standalone_checkbox.config(state='normal')
-            # Don't automatically unset standalone when disabling onefile
-            # as user might want standalone without onefile
-
-    def check_nuitka_installed(self, python_path):
-        # Check if Nuitka is installed in the virtual environment
-        try:
-            result = subprocess.run(
-                [python_path, "-m", "nuitka", "--version"],
-                capture_output=True,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-            )
-            
-            if result.returncode == 0:
-                version = result.stdout.strip()
-                self.status_label.config(text=f"Found Nuitka {version}")
-                self.uninstall_button.config(state='normal')
-                return True
-                
-            self.status_label.config(text="Nuitka not found in environment")
-            self.uninstall_button.config(state='disabled')
-            return False
-            
-        except Exception as e:
-            self.status_label.config(text=f"Error checking Nuitka: {str(e)}")
-            self.uninstall_button.config(state='disabled')
-            return False
-
-    def install_nuitka(self, python_path):
-        # Install Nuitka in the virtual environment
-        try:
-            # Update status and force GUI refresh
-            self.status_label.config(text="Installing Nuitka... Please wait")
-            self.root.update_idletasks()  # Force GUI update
-            
-            cmd = f'"{python_path}" -m pip install nuitka'
-            process = subprocess.run(
-                cmd, 
-                shell=True,
-                capture_output=True,
-                text=True
-            )
-            
-            if process.returncode == 0:
-                self.status_label.config(text="Nuitka installed successfully!")
-                if hasattr(self, 'uninstall_button') and self.uninstall_button:
-                    self.uninstall_button.config(state='normal')
-                messagebox.showinfo("Success", "Nuitka has been successfully installed!")
-                return True
-            else:
-                error_msg = f"Failed to install Nuitka:\n{process.stderr}"
-                self.status_label.config(text="Failed to install Nuitka")
-                messagebox.showerror("Installation Error", error_msg)
-                return False
-                
-        except Exception as e:
-            error_msg = f"Error installing Nuitka: {str(e)}"
-            self.status_label.config(text="Failed to install Nuitka")
-            messagebox.showerror("Installation Error", error_msg)
-            return False
-
-    def uninstall_nuitka(self):
-        # Uninstall Nuitka from the virtual environment
-        if not self.venv_path.get():
-            return
-            
-        if not messagebox.askyesno("Confirm Uninstall", 
-                                  "Are you sure you want to uninstall Nuitka from this virtual environment?"):
-            return
-            
-        try:
-            python_path = self.get_venv_python()
-            self.status_label.config(text="Uninstalling Nuitka...")
-            
-            cmd = f'"{python_path}" -m pip uninstall nuitka -y'
-            process = subprocess.Popen(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True
-            )
-            
-            # Monitor the uninstallation progress
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    self.status_label.config(text=f"Uninstalling...\n{output.strip()}")
-                    self.root.update()
-            
-            if process.returncode == 0:
-                self.status_label.config(text="Nuitka has been uninstalled")
-                self.uninstall_button.config(state='disabled')
-                messagebox.showinfo("Success", "Nuitka has been successfully uninstalled!")
-            else:
-                self.status_label.config(text="Failed to uninstall Nuitka")
-                messagebox.showerror("Error", "Failed to uninstall Nuitka")
-                
-        except Exception as e:
-            self.status_label.config(text=f"Error uninstalling Nuitka: {str(e)}")
-            messagebox.showerror("Error", f"Error uninstalling Nuitka: {str(e)}")
-
-# This stays outside the class, with proper indentation
+# This stays outside the class
 if __name__ == '__main__':
     root = tk.Tk()
     app = Nuitkalicious(root)
