@@ -674,18 +674,18 @@ class Nuitkalicious:
             venv_python = self.get_venv_python()
             # Add optimization level directly to python command
             opt_level = int(self.optimization_level.get())
-            if opt_level >= 2:
+            if (opt_level >= 2):
                 cmd.append(f'"{venv_python}" -OO -m nuitka')
-            elif opt_level == 1:
+            elif (opt_level == 1):
                 cmd.append(f'"{venv_python}" -O -m nuitka')
             else:
                 cmd.append(f'"{venv_python}" -m nuitka')
         else:
             # Use system Python when no venv is selected
             opt_level = int(self.optimization_level.get())
-            if opt_level >= 2:
+            if (opt_level >= 2):
                 cmd.append('python -OO -m nuitka')
-            elif opt_level == 1:
+            elif (opt_level == 1):
                 cmd.append('python -O -m nuitka')
             else:
                 cmd.append('python -m nuitka')
@@ -834,10 +834,16 @@ class Nuitkalicious:
         script_dir = os.path.dirname(self.script_path.get())
         self.exe_folder = script_dir
 
-        # Handle Windows Defender exclusion if enabled
+        # Handle Windows Defender exclusion if enabled (remove duplicate code)
         if os.name == 'nt' and self.defender_exclusion_var.get():
-            self.modify_defender_exclusion(script_dir, add=True)
-            self.status_label.config(text="Added Windows Defender exclusion...")
+            build_path = os.path.join(os.path.dirname(self.script_path.get()), "build")
+            if not self.modify_defender_exclusion(build_path, add=True):
+                if not messagebox.askyesno("Windows Defender", 
+                    "Failed to add Windows Defender exclusion. This may slow down compilation.\n\nDo you want to continue anyway?"):
+                    self.status_label.config(text="Compilation cancelled by user")
+                    return
+            else:
+                self.status_label.config(text="Starting compilation (with Defender exclusion)...")
 
         # Build the command
         cmd = self.build_command()
@@ -989,19 +995,78 @@ class Nuitkalicious:
             return f'"{venv_python}" {command}'
         return f'python {command}'
 
+    def test_defender_exclusion(self, build_path):
+        """Test Windows Defender exclusion functionality"""
+        try:
+            # Check admin rights
+            admin_check = 'powershell -Command "([Security.Principal.WindowsPrincipal] ' \
+                         '[Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"'
+            is_admin = subprocess.run(admin_check, capture_output=True, text=True).stdout.strip() == "True"
+            
+            if not is_admin:
+                self.status_label.config(text="Admin rights required for Defender modification")
+                return False
+                
+            # Check if path already in exclusions
+            check_cmd = f'powershell -Command "Get-MpPreference | Select-Object -ExpandProperty ExclusionPath"'
+            result = subprocess.run(check_cmd, capture_output=True, text=True)
+            current_exclusions = result.stdout.strip().split('\n')
+            
+            if build_path in current_exclusions:
+                self.status_label.config(text="Path already in exclusions")
+                return True
+                
+            # Test adding exclusion
+            add_cmd = f'powershell -Command "Add-MpPreference -ExclusionPath \'{build_path}\'"'
+            add_result = subprocess.run(add_cmd, capture_output=True, text=True)
+            
+            if add_result.returncode == 0:
+                self.status_label.config(text="Successfully added exclusion")
+                return True
+            else:
+                self.status_label.config(text=f"Failed to add exclusion: {add_result.stderr}")
+                return False
+                
+        except Exception as e:
+            self.status_label.config(text=f"Error testing exclusion: {str(e)}")
+            return False
+
     def modify_defender_exclusion(self, build_path, add=True):
         """Add or remove Windows Defender exclusion"""
         if not build_path:
             return False
             
+        # Convert to absolute path and normalize slashes
+        build_path = os.path.abspath(build_path).replace('/', '\\')
+        
         action = "Add-MpPreference" if add else "Remove-MpPreference"
-        command = f'powershell -Command "Start-Process powershell -Verb RunAs -ArgumentList \'-NoProfile -Command {action} -ExclusionPath \"{build_path}\"\'\"'
+        action_text = "add to" if add else "remove from"
         
         try:
-            subprocess.run(command, shell=True, check=True)
-            return True
-        except subprocess.CalledProcessError:
-            messagebox.showerror("Error", "Failed to modify Windows Defender exclusion. Make sure you have admin rights.")
+            # Create the PowerShell command
+            ps_script = f'''
+            Start-Process powershell -ArgumentList "-Command {action} -ExclusionPath '{build_path}'" -Verb RunAs -WindowStyle Hidden -Wait
+            '''
+            
+            self.status_label.config(text=f"Requesting permission to {action_text} Windows Defender exclusions...")
+            self.root.update_idletasks()
+            
+            # Execute the PowerShell command
+            result = subprocess.run(['powershell', '-Command', ps_script], 
+                                 capture_output=True, 
+                                 text=True)
+            
+            if result.returncode == 0:
+                self.status_label.config(text=f"Windows Defender exclusion {action_text.rstrip('to')}ed successfully")
+                return True
+            else:
+                self.status_label.config(text="Failed to modify Windows Defender exclusion")
+                return False
+                
+        except Exception as e:
+            self.status_label.config(text=f"Error modifying Windows Defender exclusion: {str(e)}")
+            messagebox.showerror("Error", 
+                f"Failed to modify Windows Defender exclusion.\nCompilation will continue but may be slower.")
             return False
 
 # This stays outside the class
