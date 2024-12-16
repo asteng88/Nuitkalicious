@@ -1,6 +1,6 @@
 """
 Nuitkalicious - A GUI for Nuitka Python Compiler
-Author: asteng88
+Author: asteng88 - Andrew Thomas
 Description: GUI application to simplify the use of Nuitka compiler for Python
 """
 
@@ -37,13 +37,14 @@ class Nuitkalicious:
         self.resource_files = []
         self.exe_folder = None
         self.icon_path = None
+        self.defender_exclusion_var = tk.BooleanVar()
         self.venv_active = True
 
     def _setup_main_window(self, root):
         """Setup the main application window"""
         self.root = root
         self.root.title("Nuitkalicious - Nuitka GUI")
-        self.root.geometry("700x765")
+        self.root.geometry("700x650")
         self._setup_app_icon()
 
     def _setup_app_icon(self):
@@ -98,9 +99,11 @@ class Nuitkalicious:
         options_frame = ttk.LabelFrame(self.basic_frame, text="Options", padding=5)
         options_frame.pack(fill='x', padx=5, pady=5)
         
-        # Create two columns
+        # Create three columns
         left_column = ttk.Frame(options_frame)
         left_column.pack(side='left', fill='both', expand=True, padx=5)
+        middle_column = ttk.Frame(options_frame)
+        middle_column.pack(side='left', fill='both', expand=True, padx=5)
         right_column = ttk.Frame(options_frame)
         right_column.pack(side='left', fill='both', expand=True, padx=5)
         
@@ -121,20 +124,25 @@ class Nuitkalicious:
         self.no_console_var = tk.BooleanVar()
         ttk.Checkbutton(left_column, text="No Console", variable=self.no_console_var).pack(anchor='w')
         
-        # Right column - Basic options
+        # Middle column - Basic options
         self.follow_imports_var = tk.BooleanVar()
-        self.follow_imports_checkbox = ttk.Checkbutton(right_column, text="Follow Imports", 
+        self.follow_imports_checkbox = ttk.Checkbutton(middle_column, text="Follow Imports", 
                                                      variable=self.follow_imports_var)
         self.follow_imports_checkbox.pack(anchor='w')
         
         self.lto_var = tk.BooleanVar()
-        ttk.Checkbutton(right_column, text="LTO (Link Time Optimization)", variable=self.lto_var).pack(anchor='w')
+        ttk.Checkbutton(middle_column, text="LTO (Link Time Optimization)", variable=self.lto_var).pack(anchor='w')
         
         self.tkinter_var = tk.BooleanVar()
-        ttk.Checkbutton(right_column, text="Enable Tkinter Support", variable=self.tkinter_var).pack(anchor='w')
+        ttk.Checkbutton(middle_column, text="Enable Tkinter Support", variable=self.tkinter_var).pack(anchor='w')
         
         self.pyqt6_var = tk.BooleanVar()
-        ttk.Checkbutton(right_column, text="Enable PyQt6 Support", variable=self.pyqt6_var).pack(anchor='w')
+        ttk.Checkbutton(middle_column, text="Enable PyQt6 Support", variable=self.pyqt6_var).pack(anchor='w')
+        
+        # Right column - Add Windows Defender exclusion
+        self.defender_exclusion_var = tk.BooleanVar()
+        ttk.Checkbutton(right_column, text="Add Windows Defender Exclusion", 
+                       variable=self.defender_exclusion_var).pack(anchor='w')
         
         jobs_frame = ttk.Frame(right_column)
         jobs_frame.pack(fill='x', pady=5)
@@ -318,7 +326,7 @@ class Nuitkalicious:
             'debug': tk.BooleanVar(),
             'unstriped': tk.BooleanVar(),
             'trace_execution': tk.BooleanVar(),
-            'disable_dll_dependency_cache': tk.BooleanVar(),
+            'disable_dll_depsubprocess_cache': tk.BooleanVar(),  # This was mismatched
             'experimental': tk.BooleanVar(),
             'show_memory': tk.BooleanVar(),
             'show_progress': tk.BooleanVar(),
@@ -365,6 +373,7 @@ class Nuitkalicious:
         self.pyqt6_var.set(False)
         self.use_venv_var.set(False)
         self.lto_var.set(False)
+        self.defender_exclusion_var.set(False)
         
         # Reset other states
         self.venv_entry.config(state='disabled')
@@ -500,19 +509,46 @@ class Nuitkalicious:
     def check_nuitka_installed(self, python_path):
         # Check if Nuitka is installed in the virtual environment
         try:
+            # Check installed version
+            cmd = f'"{python_path}" -m pip list'
+            self.status_label.config(text="Checking for Nuitka installation...inside the virtual environment")
+            self.root.update_idletasks()  # Force GUI update
             result = subprocess.run(
-                [python_path, "-m", "nuitka", "--version"],
+                cmd,
+                shell=True,
                 capture_output=True,
                 text=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             
-            if result.returncode == 0:
-                version = result.stdout.strip()
-                self.status_label.config(text=f"Found Nuitka {version}")
-                self.uninstall_button.config(state='normal')
+            installed_version = None
+            if 'nuitka' in result.stdout.lower():
+                for line in result.stdout.split('\n'):
+                    if 'nuitka' in line.lower():
+                        installed_version = line.split()[1]
+                        self.uninstall_button.config(state='normal')
+                        
+            # Check latest version from PyPI
+            pypi_cmd = f'"{python_path}" -m pip index versions nuitka'
+            pypi_result = subprocess.run(
+                pypi_cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            
+            if installed_version:
+                latest_version = pypi_result.stdout.split('\n')[0].split()[-1]
+                if installed_version < latest_version:  # Only show upgrade prompt if newer version exists
+                    self.status_label.config(text=f"Nuitka {installed_version} found (Latest: {latest_version})")
+                    if messagebox.askyesno("Update Available", 
+                                         f"A newer version of Nuitka is available {latest_version}. Update now?"):
+                        return self.upgrade_nuitka(python_path)
+                else:
+                    self.status_label.config(text=f"Nuitka {installed_version} (Latest version)")
                 return True
-                
+            
             self.status_label.config(text="Nuitka not found in environment")
             self.uninstall_button.config(state='disabled')
             return False
@@ -522,11 +558,42 @@ class Nuitkalicious:
             self.uninstall_button.config(state='disabled')
             return False
 
+    def upgrade_nuitka(self, python_path):
+        if not self.venv_path.get():
+            return
+        
+        try:
+            self.status_label.config(text="Upgrading Nuitka... Please wait while it is being upgraded.")
+            self.root.update_idletasks()  # Force GUI update
+            cmd = f'"{python_path}" -m pip install --upgrade nuitka'
+            process = subprocess.run(
+                cmd, 
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            
+            if process.returncode == 0:
+                self.status_label.config(text="Nuitka has been upgraded successfully!")
+                messagebox.showinfo("Success", "Nuitka has been successfully upgraded!")
+                return True
+            else:
+                error_msg = f"Failed to upgrade Nuitka:\n{process.stderr}"
+                self.status_label.config(text="Failed to upgrade Nuitka")
+                messagebox.showerror("Upgrade Error", error_msg)
+                return False
+        
+        except Exception as e:
+            error_msg = f"Error upgrading Nuitka: {str(e)}"
+            self.status_label.config(text="Failed to upgrade Nuitka")
+            messagebox.showerror("Upgrade Error", error_msg)
+            return False
+    
     def install_nuitka(self, python_path):
         # Install Nuitka in the virtual environment
         try:
             # Update status and force GUI refresh
-            self.status_label.config(text="Installing Nuitka... Please wait")
+            self.status_label.config(text="Installing Nuitka... Please wait while it is being installed.")
             self.root.update_idletasks()  # Force GUI update
             
             cmd = f'"{python_path}" -m pip install nuitka'
@@ -710,7 +777,7 @@ class Nuitkalicious:
             cmd.append('--unstriped')
         if self.debug_vars['trace_execution'].get():
             cmd.append('--trace-execution')
-        if self.debug_vars['disable_dll_dependency_cache'].get():
+        if self.debug_vars['disable_dll_depsubprocess_cache'].get():  # Updated to match the key name
             cmd.append('--disable-dll-dependency-cache')
         if self.debug_vars['experimental'].get():
             cmd.append('--experimental')
@@ -766,6 +833,11 @@ class Nuitkalicious:
         # Store the exe folder path
         script_dir = os.path.dirname(self.script_path.get())
         self.exe_folder = script_dir
+
+        # Handle Windows Defender exclusion if enabled
+        if os.name == 'nt' and self.defender_exclusion_var.get():
+            self.modify_defender_exclusion(script_dir, add=True)
+            self.status_label.config(text="Added Windows Defender exclusion...")
 
         # Build the command
         cmd = self.build_command()
@@ -847,11 +919,14 @@ class Nuitkalicious:
                     with open(status_file, 'r') as f:
                         status = f.read().strip()
                     if status == 'SUCCESS':
-                        self.status_label.config(text="Compilation completed successfully")
+                        # Remove Windows Defender exclusion if it was added
+                        if os.name == 'nt' and self.defender_exclusion_var.get():
+                            self.modify_defender_exclusion(self.exe_folder, add=False)
+                            self.status_label.config(text="Compilation completed successfully. Defender exclusion removed.")
+                        else:
+                            self.status_label.config(text="Compilation completed successfully")
                         self.open_exe_button.config(state='normal')
-                        # Show success message from main application
-                        messagebox.showinfo("Compilation Complete", 
-                                          "Compilation completed successfully!")
+                        messagebox.showinfo("Compilation Complete", "Compilation completed successfully!")
                         return
                     elif status == 'FAILED':
                         self.status_label.config(text="Compilation failed - Check terminal for details")
@@ -913,6 +988,21 @@ class Nuitkalicious:
             # Use the venv's Python directly instead of activation
             return f'"{venv_python}" {command}'
         return f'python {command}'
+
+    def modify_defender_exclusion(self, build_path, add=True):
+        """Add or remove Windows Defender exclusion"""
+        if not build_path:
+            return False
+            
+        action = "Add-MpPreference" if add else "Remove-MpPreference"
+        command = f'powershell -Command "Start-Process powershell -Verb RunAs -ArgumentList \'-NoProfile -Command {action} -ExclusionPath \"{build_path}\"\'\"'
+        
+        try:
+            subprocess.run(command, shell=True, check=True)
+            return True
+        except subprocess.CalledProcessError:
+            messagebox.showerror("Error", "Failed to modify Windows Defender exclusion. Make sure you have admin rights.")
+            return False
 
 # This stays outside the class
 if __name__ == '__main__':
