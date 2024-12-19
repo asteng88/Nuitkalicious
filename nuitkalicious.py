@@ -44,7 +44,7 @@ class Nuitkalicious:
         """Setup the main application window"""
         self.root = root
         self.root.title("Nuitkalicious - Nuitka GUI")
-        self.root.geometry("700x765")
+        self.root.geometry("700x700")
         self._setup_app_icon()
 
     def _setup_app_icon(self):
@@ -305,7 +305,7 @@ class Nuitkalicious:
         }
 
         for name, var in self.perf_vars.items():
-            ttk.Checkbutton(perf_frame, text=name.replace('_', ' ').title(), 
+            ttk.Checkbutton(perf_frame, text=name.replace('_', ' '). title(), 
                            variable=var).pack(anchor='w')
 
         optim_frame = ttk.LabelFrame(middle_column, text="Optimization Options", padding=5)
@@ -628,6 +628,19 @@ class Nuitkalicious:
             messagebox.showerror("Error", f"Error uninstalling Nuitka: {str(e)}")
 
     # Group 4: Command Building and Execution
+
+    def get_tcl_tk_paths(self):
+        """Get correct Tcl/Tk paths and version info"""
+        import tkinter
+        import os
+        
+        tcl_lib = os.path.join(os.path.dirname(os.path.dirname(tkinter.__file__)), 'tcl')
+        tk_lib = os.path.join(os.path.dirname(os.path.dirname(tkinter.__file__)), 'tk')
+        
+        # Find exact Tcl version
+        tcl_version = tkinter.Tcl().eval('info patchlevel')
+        return tcl_lib, tk_lib, tcl_version
+
     def build_command(self):
         cmd = []
         
@@ -749,6 +762,33 @@ class Nuitkalicious:
             cmd.append('--show-progress')
         if self.debug_vars['verbose'].get():
             cmd.append('--verbose')
+
+        # Include Tcl/Tk files only if Tkinter support is enabled
+        if self.tkinter_var.get():
+            tcl_lib, tk_lib, tcl_version = self.get_tcl_tk_paths()
+            
+            if os.path.exists(tcl_lib):
+                cmd.append(f'--include-package=tkinter')
+                cmd.append(f'--include-package=_tkinter')
+                cmd.append(f'--include-data-dir={tcl_lib}=tcl')
+                cmd.append(f'--include-data-dir={tk_lib}=tk')
+                
+                # Include specific version folders
+                tcl_version_dir = os.path.join(tcl_lib, f'tcl{tcl_version.rsplit(".", 1)[0]}')
+                tk_version_dir = os.path.join(tk_lib, f'tk{tcl_version.rsplit(".", 1)[0]}')
+                
+                if os.path.exists(tcl_version_dir):
+                    cmd.append(f'--include-data-dir={tcl_version_dir}=tcl{tcl_version.rsplit(".", 1)[0]}')
+                if os.path.exists(tk_version_dir):
+                    cmd.append(f'--include-data-dir={tk_version_dir}=tk{tcl_version.rsplit(".", 1)[0]}')
+
+            # Add plugin options for tkinter
+            cmd.append('--enable-plugin=tk-inter')
+
+            # Exclude unnecessary test modules
+            cmd.append('--nofollow-import-to=tkinter.test')
+            cmd.append('--nofollow-import-to=tkinter.test.support')
+            cmd.append('--nofollow-import-to=tkinter.test.widget_tests')
 
         # Add the script path as the last argument with proper quoting
         cmd.append(f'"{script_path}"')
