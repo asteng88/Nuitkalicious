@@ -1,10 +1,12 @@
 """
 Nuitkalicious - A GUI for Nuitka Python Compiler
 Author: asteng88 - Andrew Thomas
+Version: 1.4.2
 Description: GUI application to simplify the use of Nuitka compiler for Python
 """
 
 import tkinter as tk
+
 from tkinter import ttk, filedialog, scrolledtext, messagebox
 import subprocess
 import os
@@ -12,7 +14,7 @@ import os
 # Windows taskbar icon support
 try:
     from ctypes import windll
-    my_appid = 'com.asteng88.nuitkalicious.nuitkalicious.1.4.0'
+    my_appid = 'com.asteng88.nuitkalicious.nuitkalicious.1.4.2'
     windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_appid)
 except ImportError:
     pass
@@ -37,13 +39,12 @@ class Nuitkalicious:
         self.resource_files = []
         self.exe_folder = None
         self.icon_path = None
-        self.defender_exclusion_var = tk.BooleanVar()
         self.venv_active = True
 
     def _setup_main_window(self, root):
         """Setup the main application window"""
         self.root = root
-        self.root.title("Nuitkalicious - Nuitka GUI")
+        self.root.title("Nuitkalicious - Nuitka GUI - Version 1.4.2")
         self.root.geometry("700x700")
         self._setup_app_icon()
 
@@ -139,11 +140,7 @@ class Nuitkalicious:
         self.pyqt6_var = tk.BooleanVar()
         ttk.Checkbutton(middle_column, text="Enable PyQt6 Support", variable=self.pyqt6_var).pack(anchor='w')
         
-        # Right column - Add Windows Defender exclusion
-        self.defender_exclusion_var = tk.BooleanVar()
-        ttk.Checkbutton(right_column, text="Add Windows Defender Exclusion", 
-                       variable=self.defender_exclusion_var).pack(anchor='w')
-        
+        # Right column - Just jobs control (removed Windows Defender checkbox)
         jobs_frame = ttk.Frame(right_column)
         jobs_frame.pack(fill='x', pady=5)
         ttk.Label(jobs_frame, text="Jobs:").pack(side='left')
@@ -373,7 +370,6 @@ class Nuitkalicious:
         self.pyqt6_var.set(False)
         self.use_venv_var.set(False)
         self.lto_var.set(False)
-        self.defender_exclusion_var.set(False)
         
         # Reset other states
         self.venv_entry.config(state='disabled')
@@ -631,14 +627,12 @@ class Nuitkalicious:
 
     def get_tcl_tk_paths(self):
         """Get correct Tcl/Tk paths and version info"""
-        import tkinter
-        import os
         
-        tcl_lib = os.path.join(os.path.dirname(os.path.dirname(tkinter.__file__)), 'tcl')
-        tk_lib = os.path.join(os.path.dirname(os.path.dirname(tkinter.__file__)), 'tk')
+        tcl_lib = os.path.join(os.path.dirname(os.path.dirname(tk.__file__)), 'tcl')
+        tk_lib = os.path.join(os.path.dirname(os.path.dirname(tk.__file__)), 'tk')
         
         # Find exact Tcl version
-        tcl_version = tkinter.Tcl().eval('info patchlevel')
+        tcl_version = tk.Tcl().eval('info patchlevel')
         return tcl_lib, tk_lib, tcl_version
 
     def build_command(self):
@@ -763,6 +757,20 @@ class Nuitkalicious:
         if self.debug_vars['verbose'].get():
             cmd.append('--verbose')
 
+        # Add Nuitka exclusion patterns to prevent it from being included in the build
+        cmd.append('--nofollow-import-to=nuitka')
+        cmd.append('--nofollow-import-to=ordered_set')
+        cmd.append('--nofollow-import-to=wheel')
+        cmd.append('--nofollow-import-to=pip')
+        cmd.append('--nofollow-import-to=setuptools')
+        cmd.append('--nofollow-import-to=distutils')
+        cmd.append('--nofollow-import-to=pkg_resources')
+        cmd.append('--nofollow-import-to=zstandard')
+        
+        # Add cleanup flags
+        cmd.append('--remove-output')
+        cmd.append('--clean-cache=all')
+
         # Include Tcl/Tk files only if Tkinter support is enabled
         if self.tkinter_var.get():
             tcl_lib, tk_lib, tcl_version = self.get_tcl_tk_paths()
@@ -836,13 +844,14 @@ class Nuitkalicious:
         script_dir = os.path.dirname(self.script_path.get())
         self.exe_folder = script_dir
 
-        # Handle Windows Defender exclusion if enabled
-        if os.name == 'nt' and self.defender_exclusion_var.get():
-            self.modify_defender_exclusion(script_dir, add=True)
-            self.status_label.config(text="Added Windows Defender exclusion...")
-
-        # Build the command
+        # Build the command with additional flags to reduce false positives
         cmd = self.build_command()
+        cmd.extend([
+            '--disable-ccache',    # Disable ccache to prevent some detection issues
+            '--remove-output',     # Clean up build artifacts
+            '--clean-cache=all'    # Clean Nuitka cache
+        ])
+        
         command = ' '.join(cmd)
 
         # Create activation command based on OS
@@ -867,15 +876,27 @@ class Nuitkalicious:
                     
                     # Only include venv activation if using venv
                     if self.use_venv_var.get() and self.venv_path.get():
-                        f.write(f'echo Activating virtual environment...\n')
+                        f.write('echo Activating virtual environment...\n')
                         f.write(f'cd /d "{self.venv_path.get()}\\Scripts"\n')
                         f.write('call activate\n')
+                        
+                        # Add cleanup of Nuitka cache before compilation
+                        f.write('echo Cleaning Nuitka cache...\n')
+                        f.write('python -m nuitka --clean-cache=all\n')
+                        
                         f.write('python -c "import sys; print(f\'(venv) Python version {sys.version.split()[0]} confirmed\')" \n')
                         f.write('echo.\n')
                     
                     f.write('echo Running Nuitka compilation...\n')
                     f.write(f'cd /d "{script_dir}"\n')
                     f.write(f'{command}\n')
+                    
+                    # Add post-compilation cleanup
+                    f.write('echo Cleaning up build artifacts...\n')
+                    f.write('if exist build rmdir /s /q build\n')
+                    f.write('if exist *.build rmdir /s /q *.build\n')
+                    f.write('if exist __pycache__ rmdir /s /q __pycache__\n')
+                    
                     f.write('if %ERRORLEVEL% EQU 0 (\n')
                     f.write('    echo Compilation successful!\n')
                     f.write(f'    echo SUCCESS > "{status_file}"\n')
@@ -913,66 +934,38 @@ class Nuitkalicious:
             messagebox.showerror("Compilation Error", f"Error starting compilation: {str(e)}")
             self.status_label.config(text="Compilation failed to start")
 
-    def monitor_compilation(self, status_file):
-        #Monitor the compilation status file and update GUI accordingly
-        def check_status():
-            if os.path.exists(status_file):
-                try:
-                    with open(status_file, 'r') as f:
-                        status = f.read().strip()
-                    if status == 'SUCCESS':
-                        # Remove Windows Defender exclusion if it was added
-                        if os.name == 'nt' and self.defender_exclusion_var.get():
-                            self.modify_defender_exclusion(self.exe_folder, add=False)
-                            self.status_label.config(text="Compilation completed successfully. Defender exclusion removed.")
-                        else:
-                            self.status_label.config(text="Compilation completed successfully")
-                        self.open_exe_button.config(state='normal')
-                        messagebox.showinfo("Compilation Complete", "Compilation completed successfully!")
-                        return
-                    elif status == 'FAILED':
-                        self.status_label.config(text="Compilation failed - Check terminal for details")
-                        messagebox.showerror("Compilation Failed", 
-                                           "Compilation failed. Please check the terminal for error details.")
-                        return
-                except Exception:
-                    pass
-            # If file doesn't exist or no status yet, keep checking
-            self.status_label.config(text="Compiling... Please wait")
-            self.root.after(1000, check_status)  # Check every second
-
-        # Start monitoring
-        self.root.after(1000, check_status)
-
-    def open_exe_folder(self):
-        if self.exe_folder and os.path.exists(self.exe_folder):
-            os.startfile(self.exe_folder)  # Windows
-            # For other platforms use the following:
-            # subprocess.run(['xdg-open', self.exe_folder])  # Linux
-            # subprocess.run(['open', self.exe_folder])      # macOS
-
-    def create_command(self):
-        # Update to use status label instead of terminal output
-        if not self.script_path.get():
-            self.status_label.config(text="Error: No script selected")
-            return
-            
-        cmd = self.build_command()
-        command = ' '.join(cmd)
-        
-        # Update command preview
-        self.command_preview.delete('1.0', 'end')
-        self.command_preview.insert('end', command)
-        
-        # Update status
-        self.status_label.config(text="Command created and copied to clipboard")
-        
-        # Copy to clipboard
-        self.root.clipboard_clear()
-        self.root.clipboard_append(command)
-        
-        # Show confirmation
-        messagebox.showinfo("Command Copied", "Command has been created and copied to clipboard.")
+    def cleanup_build_artifacts(self):
+        """Clean up build artifacts after compilation"""
+        if self.exe_folder:
+            try:
+                # Clean up common build artifacts
+                artifacts = ['build', '*.build', '__pycache__']
+                for artifact in artifacts:
+                    artifact_path = os.path.join(self.exe_folder, artifact)
+                    if '*' in artifact:
+                        # Handle wildcard patterns
+                        import glob
+                        for path in glob.glob(artifact_path):
+                            if os.path.isdir(path):
+                                import shutil
+                                shutil.rmtree(path)
+                    else:
+                        if os.path.exists(artifact_path):
+                            import shutil
+                            shutil.rmtree(artifact_path)
+                
+                # Clean Nuitka cache
+                python_path = self.get_venv_python()
+                subprocess.run([python_path, '-m', 'nuitka', '--clean-cache=all'], 
+                             capture_output=True, text=True)
+                
+                self.status_label.config(text="Build artifacts cleaned up")
+                return True
+                
+            except Exception as e:
+                self.status_label.config(text=f"Error cleaning up: {str(e)}")
+                return False
+        return False
 
     # Group 5: Utility Methods
     def get_venv_python(self):
@@ -991,20 +984,90 @@ class Nuitkalicious:
             return f'"{venv_python}" {command}'
         return f'python {command}'
 
-    def modify_defender_exclusion(self, build_path, add=True):
-        """Add or remove Windows Defender exclusion"""
-        if not build_path:
-            return False
+    def create_command(self):
+        """Create and copy the Nuitka command to clipboard"""
+        if not self.script_path.get():
+            messagebox.showwarning("Script Required", "Please select a Python script first.")
+            return
             
-        action = "Add-MpPreference" if add else "Remove-MpPreference"
-        command = f'powershell -Command "Start-Process powershell -Verb RunAs -ArgumentList \'-NoProfile -Command {action} -ExclusionPath \"{build_path}\"\'\"'
-        
         try:
-            subprocess.run(command, shell=True, check=True)
-            return True
-        except subprocess.CalledProcessError:
-            messagebox.showerror("Error", "Failed to modify Windows Defender exclusion. Make sure you have admin rights.")
-            return False
+            # Build the command
+            cmd = self.build_command()
+            command = ' '.join(cmd)
+            
+            # Copy to clipboard
+            self.root.clipboard_clear()
+            self.root.clipboard_append(command)
+            
+            # Show confirmation with command preview
+            preview = f"Command copied to clipboard:\n\n{command}"
+            messagebox.showinfo("Command Created", preview)
+            
+            # Update status
+            self.status_label.config(text="Command created and copied to clipboard")
+            
+        except Exception as e:
+            error_msg = f"Error creating command: {str(e)}"
+            self.status_label.config(text="Failed to create command")
+            messagebox.showerror("Error", error_msg)
+
+    def open_exe_folder(self):
+        """Open the folder containing the compiled executable"""
+        if not self.exe_folder or not os.path.exists(self.exe_folder):
+            messagebox.showwarning("Error", "Executable folder not found.")
+            return
+            
+        try:
+            if os.name == 'nt':  # Windows
+                os.startfile(self.exe_folder)
+            elif os.name == 'darwin':  # macOS
+                subprocess.run(['open', self.exe_folder])
+            else:  # Linux
+                subprocess.run(['xdg-open', self.exe_folder])
+                
+            self.status_label.config(text="Opened executable folder")
+            
+        except Exception as e:
+            error_msg = f"Error opening folder: {str(e)}"
+            self.status_label.config(text="Failed to open folder")
+            messagebox.showerror("Error", error_msg)
+
+    def monitor_compilation(self, status_file):
+        """Monitor the compilation status file and update UI accordingly"""
+        def check_status():
+            if not os.path.exists(status_file):
+                # Keep checking if file doesn't exist yet
+                self.root.after(1000, check_status)
+                return
+            
+            try:
+                with open(status_file, 'r') as f:
+                    status = f.read().strip()
+                
+                if status == "SUCCESS":
+                    self.status_label.config(text="Compilation successful!")
+                    self.open_exe_button.config(state='normal')
+                    # Clean up the status file
+                    os.remove(status_file)
+                    # Clean up build artifacts
+                    self.cleanup_build_artifacts()
+                elif status == "FAILED":
+                    self.status_label.config(text="Compilation failed!")
+                    self.open_exe_button.config(state='disabled')
+                    # Clean up the status file
+                    os.remove(status_file)
+                    # Clean up build artifacts
+                    self.cleanup_build_artifacts()
+                else:
+                    # Keep checking if status is not final
+                    self.root.after(1000, check_status)
+            except Exception as e:
+                self.status_label.config(text=f"Error monitoring compilation: {str(e)}")
+                if os.path.exists(status_file):
+                    os.remove(status_file)
+        
+        # Start the monitoring loop
+        self.root.after(1000, check_status)
 
 # This stays outside the class
 if __name__ == '__main__':
