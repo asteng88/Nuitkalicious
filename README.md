@@ -17,8 +17,8 @@ It has the following utilities included:
 - Choice to upgrade nuitka if found and the installed version is < latest release
 - Icon inclusion (`.ico` files)
 - If no icon is selected, it uses the first image file in the resources list
-- Addition if all resource and supporting files (Add/Remove file option)
-- Create & Copy Command - Copy the bare nuitka command with all the options you have selected. Can then be pasten into a command line.
+- Addition of all resource and supporting files (Add/Remove file option)
+- Create & Copy Command - Copy the bare nuitka command with all the options you have selected. Can then be pasted into a command line.
 - Open Executable Folder - File Explorer opens the folder where the executable is stored
 - Status box for all the system messages
 - Opens and monitors a terminal window to complete all the nuitka compilation. Automatically exits when the compiling is complete.
