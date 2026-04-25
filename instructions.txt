@@ -1,0 +1,53 @@
+"""
+Nuitkalicious - A GUI for Nuitka Python Compiler
+Author: asteng88 - Andrew Thomas
+Version: 1.4.3
+Description: GUI application to simplify the use of Nuitka compiler for Python with auto-installation
+"""
+
+import tkinter as tk
+from tkinter import ttk, filedialog, scrolledtext, messagebox
+import subprocess
+import os
+
+# Windows taskbar icon support
+try:
+    from ctypes import windll
+    my_appid = 'com.asteng88.nuitkalicious.nuitkalicious.1.4.3'
+    windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_appid)
+except ImportError:
+    pass
+
+# Copy all the existing code from nuitkalicious.py.bak here, 
+# but ensure the check_nuitka_installed method has the auto-installation feature
+# and the compile method includes the code to auto-install Nuitka if needed
+
+# Add this to your existing batch file generation in the compile method:
+'''
+else:
+    # For system Python, verify that Nuitka is installed
+    f.write('echo Checking Nuitka installation...\n')
+    f.write('python -c "import importlib.util; print(\'Nuitka is installed\' if importlib.util.find_spec(\'nuitka\') else \'Nuitka is not installed\')" > nuitka_check.tmp\n')
+    f.write('set /p NUITKA_CHECK=<nuitka_check.tmp\n')
+    f.write('del nuitka_check.tmp\n')
+    f.write('if not "%NUITKA_CHECK%"=="Nuitka is installed" (\n')
+    f.write('    echo Installing Nuitka automatically...\n')
+    f.write('    python -m pip install --upgrade pip\n')
+    f.write('    python -m pip install nuitka ordered-set\n')
+    f.write('    if %ERRORLEVEL% NEQ 0 (\n')
+    f.write('        echo Failed to install Nuitka\n')
+    f.write(f'        echo FAILED > "{status_file}"\n')
+    f.write('        pause\n')
+    f.write('        exit /b 1\n')
+    f.write('    )\n')
+    f.write('    echo Nuitka installed successfully\n')
+    f.write(')\n\n')
+'''
+
+# This is a placeholder file. You'll need to manually copy your existing code from nuitkalicious.py.bak
+# and incorporate the changes above.
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = Nuitkalicious(root)
+    root.mainloop()

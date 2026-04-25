@@ -1,7 +1,7 @@
 """
 Nuitkalicious - A GUI for Nuitka Python Compiler
 Author: asteng88 - Andrew Thomas
-Version: 1.4.2
+Version: 1.4.4
 Description: GUI application to simplify the use of Nuitka compiler for Python
 """
 
@@ -14,7 +14,7 @@ import os
 # Windows taskbar icon support
 try:
     from ctypes import windll
-    my_appid = 'com.asteng88.nuitkalicious.nuitkalicious.1.4.2'
+    my_appid = 'com.asteng88.nuitkalicious.nuitkalicious.1.4.4'
     windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_appid)
 except ImportError:
     pass
@@ -44,7 +44,7 @@ class Nuitkalicious:
     def _setup_main_window(self, root):
         """Setup the main application window"""
         self.root = root
-        self.root.title("Nuitkalicious - Nuitka GUI - Version 1.4.2")
+        self.root.title("Nuitkalicious - Nuitka GUI - Version 1.4.4")
         self.root.geometry("700x700")
         self._setup_app_icon()
 
@@ -264,7 +264,6 @@ class Nuitkalicious:
         self.compilation_vars = {
             'clang': tk.BooleanVar(),
             'mingw64': tk.BooleanVar(),
-            'disable_console_ctrl_handler': tk.BooleanVar(),
             'full_compat': tk.BooleanVar(),
             'static_libpython': tk.BooleanVar()
         }
@@ -295,9 +294,8 @@ class Nuitkalicious:
         option_frames.append(perf_frame)
 
         self.perf_vars = {
-            'disable_ccache': tk.BooleanVar(),
-            'high_memory': tk.BooleanVar(),
-            'linux_onefile_icon': tk.BooleanVar(),
+            'disable_cache': tk.BooleanVar(),
+            'low_memory': tk.BooleanVar(),
             'macos_create_app_bundle': tk.BooleanVar()
         }
 
@@ -323,7 +321,7 @@ class Nuitkalicious:
             'debug': tk.BooleanVar(),
             'unstriped': tk.BooleanVar(),
             'trace_execution': tk.BooleanVar(),
-            'disable_dll_depsubprocess_cache': tk.BooleanVar(),  # This was mismatched
+            'force_dll_dependency_cache_update': tk.BooleanVar(),
             'experimental': tk.BooleanVar(),
             'show_memory': tk.BooleanVar(),
             'show_progress': tk.BooleanVar(),
@@ -436,9 +434,29 @@ class Nuitkalicious:
         if venv_dir:
             self.venv_path.set(venv_dir)
             if os.path.exists(venv_dir):
+                # Verify venv is working
+                venv_python = self.get_venv_python()
+                try:
+                    result = subprocess.run(
+                        [venv_python, "--version"], 
+                        capture_output=True, 
+                        text=True, 
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    )
+                    if result.returncode != 0:
+                        error_out = result.stderr.strip() or result.stdout.strip()
+                        messagebox.showerror(
+                            "Broken Virtual Environment", 
+                            f"The selected virtual environment appears to be broken or points to an uninstalled Python version.\n\nError details:\n{error_out}"
+                        )
+                        self.compile_button.config(state='disabled')
+                        return
+                except Exception:
+                    pass
+                
                 self.compile_button.config(state='normal')
                 # Immediately check for Nuitka when selecting venv
-                self.check_nuitka_installed(self.get_venv_python())
+                self.check_nuitka_installed(venv_python)
                 
     def add_resources(self):
         files = filedialog.askopenfilenames(
@@ -499,12 +517,13 @@ class Nuitkalicious:
             self.follow_imports_checkbox.config(state='normal')
             self.standalone_checkbox.config(state='normal')
             # Don't automatically unset standalone when disabling onefile
-            # as user might want standalone without onefile
-
-    # Group 3: Nuitka Operations
+            # as user might want standalone without onefile    # Group 3: Nuitka Operations
     def check_nuitka_installed(self, python_path):
-        # Check if Nuitka is installed in the virtual environment
+        # Check if Nuitka is installed in the virtual environment or system Python
         try:
+            self.status_label.config(text="Checking if Nuitka is installed...")
+            self.root.update_idletasks()  # Force GUI update
+            
             # First try pip list approach
             cmd = f'"{python_path}" -m pip list'
             result = subprocess.run(
@@ -521,50 +540,130 @@ class Nuitkalicious:
                     if 'nuitka' in line.lower():
                         version = line.split()[1]
                         self.status_label.config(text=f"Found Nuitka {version}")
-                        self.uninstall_button.config(state='normal')
+                        if self.use_venv_var.get() and self.uninstall_button:
+                            self.uninstall_button.config(state='normal')
                         return True
             
             # Fallback to direct module import check
-            result = subprocess.run(
-                [python_path, "-m", "nuitka", "--version"],
-                capture_output=True,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-            )
-            
-            if result.returncode == 0:
-                version = result.stdout.strip()
-                self.status_label.config(text=f"Found Nuitka {version}")
-                self.uninstall_button.config(state='normal')
-                return True
+            try:
+                result = subprocess.run(
+                    [python_path, "-m", "nuitka", "--version"],
+                    capture_output=True,
+                    text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                
+                if result.returncode == 0:
+                    version = result.stdout.strip()
+                    self.status_label.config(text=f"Found Nuitka {version}")
+                    if self.use_venv_var.get() and self.uninstall_button:
+                        self.uninstall_button.config(state='normal')
+                    return True
+            except Exception:
+                # If this fails, Nuitka is definitely not installed
+                pass
             
             self.status_label.config(text="Nuitka not found in environment")
-            self.uninstall_button.config(state='disabled')
+            if self.uninstall_button:
+                self.uninstall_button.config(state='disabled')
             return False
             
-        except Exception as e:
+        except Exception as e:            
             self.status_label.config(text=f"Error checking Nuitka: {str(e)}")
-            self.uninstall_button.config(state='disabled')
+            if self.uninstall_button:
+                self.uninstall_button.config(state='disabled')
             return False
 
+    def get_installer_commands(self, python_path, action="install", packages=""):
+        has_pip = subprocess.run([python_path, "-m", "pip", "--version"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0).returncode == 0
+        has_uv = False
+        try:
+            has_uv = subprocess.run(["uv", "--version"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0).returncode == 0
+        except Exception:
+            pass
+            
+        cmds = []
+        if has_pip:
+            if action == "install":
+                cmds.append(f'"{python_path}" -m pip install --upgrade pip')
+                cmds.append(f'"{python_path}" -m pip install {packages}')
+            else:
+                cmds.append(f'"{python_path}" -m pip uninstall -y {packages}')
+        elif has_uv:
+            if action == "install":
+                cmds.append(f'uv pip install --python "{python_path}" {packages}')
+            else:
+                cmds.append(f'uv pip uninstall --python "{python_path}" {packages}')
+        else:
+            cmds.append(f'"{python_path}" -m ensurepip --upgrade')
+            cmds.append(f'"{python_path}" -m pip install --upgrade pip')
+            if action == "install":
+                cmds.append(f'"{python_path}" -m pip install {packages}')
+            else:
+                cmds.append(f'"{python_path}" -m pip uninstall -y {packages}')
+        return cmds
+
+    def get_batch_installer_lines(self, system_python=False, packages="nuitka ordered-set zstandard imageio psutil"):
+        sys_flag = "--system " if system_python else ""
+        return [
+            '    python -m pip --version >nul 2>&1\n',
+            '    if errorlevel 1 (\n',
+            '        uv --version >nul 2>&1\n',
+            '        if errorlevel 1 (\n',
+            '            python -m ensurepip --upgrade\n',
+            f'            python -m pip install {packages}\n',
+            '        ) else (\n',
+            f'            uv pip install {sys_flag}{packages}\n',
+            '        )\n',
+            '    ) else (\n',
+            '        python -m pip install --upgrade pip\n',
+            f'        python -m pip install {packages}\n',
+            '    )\n'
+        ]
+
+    def get_batch_uninstaller_lines(self, system_python=False, packages="nuitka ordered-set"):
+        sys_flag = "--system " if system_python else ""
+        return [
+            '    python -m pip --version >nul 2>&1\n',
+            '    if errorlevel 1 (\n',
+            '        uv --version >nul 2>&1\n',
+            '        if errorlevel 1 (\n',
+            '            python -m ensurepip --upgrade\n',
+            f'            python -m pip uninstall -y {packages}\n',
+            '        ) else (\n',
+            f'            uv pip uninstall {sys_flag}{packages}\n',
+            '        )\n',
+            '    ) else (\n',
+            f'        python -m pip uninstall -y {packages}\n',
+            '    )\n'
+        ]
+            
     def install_nuitka(self, python_path):
-        # Install Nuitka in the virtual environment
+        """Install Nuitka in the environment (venv or system)"""
         try:
             # Update status and force GUI refresh
-            self.status_label.config(text="Installing Nuitka... Please wait while it is being installed.")
+            self.status_label.config(text="Determining package manager...")
             self.root.update_idletasks()  # Force GUI update
             
-            cmd = f'"{python_path}" -m pip install nuitka'
-            process = subprocess.run(
-                cmd, 
-                shell=True,
-                capture_output=True,
-                text=True
-            )
+            cmds = self.get_installer_commands(python_path, "install", "nuitka ordered-set zstandard imageio psutil")
+            process = None
+            
+            for cmd in cmds:
+                self.status_label.config(text=f"Running: {cmd.split()[0]}...")
+                self.root.update_idletasks()
+                process = subprocess.run(
+                    cmd, 
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                if process.returncode != 0 and "uninstall" not in cmd and "upgrade pip" not in cmd and "ensurepip" not in cmd:
+                    break
             
             if process.returncode == 0:
                 self.status_label.config(text="Nuitka installed successfully!")
-                if hasattr(self, 'uninstall_button') and self.uninstall_button:
+                if hasattr(self, 'uninstall_button') and self.uninstall_button and self.use_venv_var.get():
                     self.uninstall_button.config(state='normal')
                 messagebox.showinfo("Success", "Nuitka has been successfully installed!")
                 return True
@@ -593,23 +692,29 @@ class Nuitkalicious:
             python_path = self.get_venv_python()
             self.status_label.config(text="Uninstalling Nuitka...")
             
-            cmd = f'"{python_path}" -m pip uninstall nuitka -y'
-            process = subprocess.Popen(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True
-            )
+            cmds = self.get_installer_commands(python_path, "uninstall", "nuitka ordered-set zstandard")
+            process = None
             
-            # Monitor the uninstallation progress
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
+            for cmd in cmds:
+                process = subprocess.Popen(
+                    cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True
+                )
+                
+                # Monitor the uninstallation progress
+                while True:
+                    output = process.stdout.readline()
+                    if output == '' and process.poll() is not None:
+                        break
+                    if output:
+                        self.status_label.config(text=f"Uninstalling...\n{output.strip()[:50]}")
+                        self.root.update()
+                
+                if process.returncode != 0 and "ensurepip" not in cmd:
                     break
-                if output:
-                    self.status_label.config(text=f"Uninstalling...\n{output.strip()}")
-                    self.root.update()
             
             if process.returncode == 0:
                 self.status_label.config(text="Nuitka has been uninstalled")
@@ -710,8 +815,6 @@ class Nuitkalicious:
             cmd.append('--clang')
         if self.compilation_vars['mingw64'].get():
             cmd.append('--mingw64')
-        if self.compilation_vars['disable_console_ctrl_handler'].get():
-            cmd.append('--disable-console-ctrl-handler')
         if self.compilation_vars['full_compat'].get():
             cmd.append('--full-compat')
         if self.compilation_vars['static_libpython'].get():
@@ -730,12 +833,10 @@ class Nuitkalicious:
             cmd.append('--remove-embedded')
 
         # Performance options
-        if self.perf_vars['disable_ccache'].get():
-            cmd.append('--disable-ccache')
-        if self.perf_vars['high_memory'].get():
-            cmd.append('--jobs=maximum')
-        if self.perf_vars['linux_onefile_icon'].get():
-            cmd.append('--linux-onefile-icon')
+        if self.perf_vars['disable_cache'].get():
+            cmd.append('--disable-cache=all')
+        if self.perf_vars['low_memory'].get():
+            cmd.append('--low-memory')
         if self.perf_vars['macos_create_app_bundle'].get():
             cmd.append('--macos-create-app-bundle')
 
@@ -746,10 +847,10 @@ class Nuitkalicious:
             cmd.append('--unstriped')
         if self.debug_vars['trace_execution'].get():
             cmd.append('--trace-execution')
-        if self.debug_vars['disable_dll_depsubprocess_cache'].get():  # Updated to match the key name
-            cmd.append('--disable-dll-dependency-cache')
+        if self.debug_vars['force_dll_dependency_cache_update'].get():
+            cmd.append('--force-dll-dependency-cache-update')
         if self.debug_vars['experimental'].get():
-            cmd.append('--experimental')
+            cmd.append('--experimental=yes')
         if self.debug_vars['show_memory'].get():
             cmd.append('--show-memory')
         if self.debug_vars['show_progress'].get():
@@ -796,18 +897,39 @@ class Nuitkalicious:
             # Exclude unnecessary test modules
             cmd.append('--nofollow-import-to=tkinter.test')
             cmd.append('--nofollow-import-to=tkinter.test.support')
-            cmd.append('--nofollow-import-to=tkinter.test.widget_tests')
-
-        # Add the script path as the last argument with proper quoting
+            cmd.append('--nofollow-import-to=tkinter.test.widget_tests')        # Add the script path as the last argument with proper quoting
         cmd.append(f'"{script_path}"')
 
         return cmd
-
     def compile(self):
-        if self.use_venv_var.get() and not os.path.exists(self.venv_path.get()):
-            messagebox.showwarning("Virtual Environment Required", 
-                "Please select a valid virtual environment directory.")
-            return
+        if self.use_venv_var.get():
+            if not self.venv_path.get() or not os.path.exists(self.venv_path.get()):
+                messagebox.showwarning("Virtual Environment Required", 
+                    "Please select a valid virtual environment directory.")
+                return
+            
+            # Verify the virtual environment's python is working
+            venv_python = self.get_venv_python()
+            try:
+                result = subprocess.run(
+                    [venv_python, "--version"], 
+                    capture_output=True, 
+                    text=True, 
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                if result.returncode != 0:
+                    error_out = result.stderr.strip() or result.stdout.strip()
+                    messagebox.showerror(
+                        "Broken Virtual Environment", 
+                        f"The selected virtual environment appears to be broken or points to an uninstalled Python version.\n\nError details:\n{error_out}\n\nPlease select a different environment or recreate this one."
+                    )
+                    return
+            except Exception as e:
+                messagebox.showerror(
+                    "Broken Virtual Environment", 
+                    f"Failed to execute Python from the selected virtual environment:\n{e}\n\nPlease select a different environment."
+                )
+                return
 
         if not self.script_path.get():
             messagebox.showwarning("Script Required", "Please select a Python script to compile.")
@@ -816,80 +938,158 @@ class Nuitkalicious:
         # Reset button state
         self.open_exe_button.config(state='disabled')
         
-        # Check Nuitka installation
-        python_path = self.get_venv_python()
-        if not self.check_nuitka_installed(python_path):
-            if self.use_venv_var.get():
-                # For venv, offer to install
-                if not messagebox.askyesno("Nuitka Not Found", 
-                    "Nuitka is not installed in the selected virtual environment. Would you like to install it?"):
-                    self.status_label.config(text="Compilation cancelled - Nuitka not installed")
-                    return
-                if not self.install_nuitka(python_path):
-                    return
-            else:
-                # For system Python, just show error
-                messagebox.showerror("Nuitka Not Found", 
-                    "Nuitka is not installed in your system Python installation.\n\n" +
-                    "Please either:\n" +
-                    "1. Install Nuitka in your system Python using 'pip install nuitka'\n" +
-                    "2. Use a virtual environment (recommended)")
-                self.status_label.config(text="Compilation cancelled - Nuitka not installed")
-                return
-
-        # Update status
-        self.status_label.config(text="Starting compilation...")
-        
-        # Store the exe folder path
+        # Use our enhanced compile approach
         script_dir = os.path.dirname(self.script_path.get())
         self.exe_folder = script_dir
-
-        # Build the command with additional flags to reduce false positives
-        cmd = self.build_command()
-        cmd.extend([
-            '--disable-ccache',    # Disable ccache to prevent some detection issues
-            '--remove-output',     # Clean up build artifacts
-            '--clean-cache=all'    # Clean Nuitka cache
-        ])
+        status_file = os.path.join(os.environ['TEMP'], 'nuitka_status.txt')
         
-        command = ' '.join(cmd)
-
-        # Create activation command based on OS
-        if os.name == 'nt':  # Windows
-            activate_cmd = f"cd /d {self.venv_path.get()}\\Scripts && activate && "
-        else:  # Unix-like
-            activate_cmd = f"source {self.venv_path.get()}/bin/activate && "
-
-        # Combine activation with the Nuitka command
-        full_command = f"{activate_cmd}{command}"
-
+        # Remove old status file if it exists
+        if os.path.exists(status_file):
+            os.remove(status_file)
+            
         try:
             if os.name == 'nt':  # Windows
-                # Create status flag file
-                status_file = os.path.join(os.environ['TEMP'], 'nuitka_status.txt')
-                if os.path.exists(status_file):
-                    os.remove(status_file)
-                    
+                # Create a batch file for compilation
                 batch_file = os.path.join(os.environ['TEMP'], 'nuitka_compile.bat')
                 with open(batch_file, 'w') as f:
                     f.write('@echo off\n')
+                    f.write('echo Nuitkalicious Compiler\n')
+                    f.write('echo ======================\n\n')
                     
-                    # Only include venv activation if using venv
+                    # Build the command list based on the options
+                    cmd_list = []
+                    
+                    # Core options
+                    if self.standalone_var.get():
+                        cmd_list.append('--standalone')
+                    if self.onefile_var.get():
+                        cmd_list.append('--onefile')
+                    if self.no_console_var.get():
+                        cmd_list.append('--windows-console-mode=disable')
+                    if self.remove_output_var.get():
+                        cmd_list.append('--remove-output')
+                        
+                    # Common Plugins
+                    if self.tkinter_var.get():
+                        cmd_list.append('--enable-plugin=tk-inter')
+                        cmd_list.append('--include-package=tkinter')
+                    if self.pyqt6_var.get():
+                        cmd_list.append('--enable-plugin=pyqt6')
+                    
+                    # Performance options
+                    if self.lto_var.get():
+                        cmd_list.append('--lto=yes')
+                    if self.jobs_var.get():
+                        cmd_list.append(f'--jobs={self.jobs_var.get()}')
+                        
+                    # Add icon if specified
+                    if self.icon_path:
+                        icon_basename = os.path.basename(self.icon_path)
+                        cmd_list.append(f'--windows-icon-from-ico="{self.icon_path}"')
+                        cmd_list.append(f'--include-data-files="{self.icon_path}"="{icon_basename}"')
+                        
+                    # Add resource files
+                    for res_file in self.resource_files:
+                        target_path = os.path.basename(res_file)
+                        if not res_file.lower().endswith('.ico'):
+                            cmd_list.append(f'--include-data-file="{res_file}"="{target_path}"')
+                            
+                    # Add debug options
+                    if hasattr(self, 'debug_vars'):
+                        if self.debug_vars['debug'].get():
+                            cmd_list.append('--debug')
+                        if self.debug_vars['verbose'].get():
+                            cmd_list.append('--verbose')
+                    
+                    # Add exclusion patterns for problematic packages
+                    cmd_list.extend([
+                        '--nofollow-import-to=nuitka',
+                        '--nofollow-import-to=ordered_set',
+                        '--nofollow-import-to=wheel',
+                        '--nofollow-import-to=pip',
+                        '--nofollow-import-to=setuptools',
+                        '--nofollow-import-to=distutils',
+                        '--nofollow-import-to=pkg_resources',
+                        '--nofollow-import-to=cffi',
+                        '--nofollow-import-to=cryptography',
+                        '--nofollow-import-to=pycparser'
+                    ])
+                    
+                    # Safety options
+                    cmd_list.extend([
+                        '--assume-yes-for-downloads',
+                        '--remove-output',
+                        '--clean-cache=all'
+                    ])
+                    
+                    # Add output directory
+                    cmd_list.append(f'--output-dir="{script_dir}"')
+                    
+                    # Handle virtual environment vs system Python
                     if self.use_venv_var.get() and self.venv_path.get():
-                        f.write('echo Activating virtual environment...\n')
+                        # Use virtual environment
+                        f.write('echo Setting up virtual environment...\n')
                         f.write(f'cd /d "{self.venv_path.get()}\\Scripts"\n')
                         f.write('call activate\n')
                         
-                        # Add cleanup of Nuitka cache before compilation
-                        f.write('echo Cleaning Nuitka cache...\n')
-                        f.write('python -m nuitka --clean-cache=all\n')
+                        # Auto-install Nuitka in venv if needed
+                        f.write('echo Checking for Nuitka in virtual environment...\n')
+                        f.write('python -c "import sys, importlib.util; sys.exit(0 if importlib.util.find_spec(\'nuitka\') else 1)" >nul 2>&1\n')
+                        f.write('if %ERRORLEVEL% NEQ 0 (\n')
+                        f.write('    echo Nuitka not found in virtual environment. Installing...\n')
+                        f.writelines(self.get_batch_installer_lines(system_python=False))
+                        f.write('    if %ERRORLEVEL% NEQ 0 (\n')
+                        f.write('        echo Failed to install Nuitka in virtual environment\n')
+                        f.write(f'        echo FAILED > "{status_file}"\n')
+                        f.write('        pause\n')
+                        f.write('        exit /b 1\n')
+                        f.write('    )\n')
+                        f.write(')\n\n')
                         
-                        f.write('python -c "import sys; print(f\'(venv) Python version {sys.version.split()[0]} confirmed\')" \n')
-                        f.write('echo.\n')
-                    
-                    f.write('echo Running Nuitka compilation...\n')
-                    f.write(f'cd /d "{script_dir}"\n')
-                    f.write(f'{command}\n')
+                        # Clean any corrupted packages that might be causing the issue
+                        f.write('echo Cleaning potential corrupted packages...\n')
+                        f.writelines(self.get_batch_uninstaller_lines(system_python=False, packages="cffi cryptography pycparser"))
+                        f.writelines(self.get_batch_installer_lines(system_python=False, packages="cffi cryptography"))
+                        f.write('\n')
+                        
+                        # Verify Nuitka works
+                        f.write('echo Verifying Nuitka installation...\n')
+                        f.write('python -m nuitka --version >nul 2>&1\n')
+                        f.write('if %ERRORLEVEL% NEQ 0 (\n')
+                        f.write('    echo Problem with Nuitka installation\n')
+                        f.write('    echo Trying to repair Nuitka...\n')
+                        f.writelines(self.get_batch_uninstaller_lines(system_python=False, packages="nuitka ordered-set"))
+                        f.writelines(self.get_batch_installer_lines(system_python=False))
+                        f.write('    if %ERRORLEVEL% NEQ 0 (\n')
+                        f.write('        echo Failed to repair Nuitka\n')
+                        f.write(f'        echo FAILED > "{status_file}"\n')
+                        f.write('        pause\n')
+                        f.write('        exit /b 1\n')
+                        f.write('    )\n')
+                        f.write(')\n\n')
+                        
+                        # Run Nuitka from the clean environment
+                        f.write('echo Running Nuitka compilation...\n')
+                        f.write(f'cd /d "{script_dir}"\n')
+                        f.write(f'python -m nuitka {" ".join(cmd_list)} "{self.script_path.get()}"\n')
+                    else:
+                        # Use system Python with auto-install
+                        f.write('echo Checking Nuitka in system Python...\n')
+                        f.write('python -c "import sys, importlib.util; sys.exit(0 if importlib.util.find_spec(\'nuitka\') else 1)" >nul 2>&1\n')
+                        f.write('if %ERRORLEVEL% NEQ 0 (\n')
+                        f.write('    echo Installing Nuitka in system Python...\n')
+                        f.writelines(self.get_batch_installer_lines(system_python=True))
+                        f.write('    if %ERRORLEVEL% NEQ 0 (\n')
+                        f.write('        echo Failed to install Nuitka\n')
+                        f.write(f'        echo FAILED > "{status_file}"\n')
+                        f.write('        pause\n')
+                        f.write('        exit /b 1\n')
+                        f.write('    )\n')
+                        f.write(')\n\n')
+                        
+                        f.write('echo Running Nuitka compilation...\n')
+                        f.write(f'cd /d "{script_dir}"\n')
+                        f.write(f'python -m nuitka {" ".join(cmd_list)} "{self.script_path.get()}"\n')
                     
                     # Add post-compilation cleanup
                     f.write('echo Cleaning up build artifacts...\n')
