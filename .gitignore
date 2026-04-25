@@ -3,3 +3,4 @@
 /output
 /.exe
 __pycache__
+nuitka-crash-report.xml
